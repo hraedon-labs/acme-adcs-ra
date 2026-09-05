@@ -1161,7 +1161,10 @@ the same authenticated enrollment leg, so the material has the same provenance
 as the orphan itself. The candidate that actually **signed** the leaf is chosen
 by signature (`verify_directly_issued_by`), never by subject name — an ADCS CA
 key renewal keeps the DN and changes the key, so a name match picks the wrong
-generation half the time. Recovery is automatic, needs no configuration, and:
+generation half the time. Recovery runs on the next confirmation attempt for that serial and needs no
+new configuration — though it is reached only where
+`ACME_RA_REVOCATION_CONFIRM_CRL_URL` is set, since a deployment that gathers no
+CRL evidence has nothing for it to unblock. And:
 
 * it repairs the **input** and decides nothing. Signature, freshness and
   monotonicity all still have to pass on their own terms afterwards;

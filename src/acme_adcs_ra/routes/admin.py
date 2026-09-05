@@ -69,7 +69,8 @@ ISSUER_EVIDENCE_MISSING = "issuer-evidence-missing"
 # the finding instead of living only in a document.
 ISSUER_EVIDENCE_RECOVERY_ACTION = (
     "the RA holds this certificate but not the CA certificate that signed it, "
-    "so no CRL signature can be verified for it. Recovery is automatic once "
+    "so no CRL signature can be verified for it. Recovery runs automatically on "
+    "the next confirmation attempt, once revocation_confirm_crl_url is set and "
     "the store holds any complete chain from the same issuing CA; until then, "
     "reconcile it at the CA by ReqID."
 )
@@ -94,7 +95,13 @@ def _recover_issuer_evidence(
     CA, and they are not the same fact.
 
     Called from inside the CRL evidence gate, so it inherits that gate's
-    single-flight per certificate row and runs off the event loop.
+    single-flight per certificate row and runs off the event loop. That also
+    means it is reached **only when a CRL URL is configured** — the caller
+    returns before this on an unconfigured deployment. Deliberate: recovery
+    exists to unblock CRL evidence, and a deployment that gathers none has
+    nothing to unblock, so the confirm path should not be writing to the store
+    on its behalf. The pending feed still labels such a row `issuer_evidence:
+    missing`, which stays true either way.
 
     Never raises: the contract of the confirm path is that an evidence problem
     is a denial, never a 500. A failed recovery returns the record unchanged and
