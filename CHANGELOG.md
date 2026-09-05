@@ -6,6 +6,67 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Transport-orphaned certificates can be confirmed again (2026-09-05)
+
+**Fixes a permanent wedge.** A certificate the CA issued but whose chain fetch
+failed was stored with its leaf and an empty chain. CRL evidence verifies the
+CRL's signature against the issuing CA certificate taken from **the
+certificate's own stored chain**, so such a row had no issuer certificate and
+every confirmation was refused — permanently under
+`ACME_RA_REVOCATION_CONFIRM_REQUIRE_CRL_EVIDENCE=true`, for a certificate that
+is live at the CA. There was no operator path out that did not weaken the
+evidence requirement.
+
+The RA now recovers the missing issuer material from chains it already holds:
+every successful issuance stored the chain the CA returned over the same
+authenticated enrollment leg, so the material carries the same provenance as the
+orphan. The candidate that actually **signed** the leaf is selected by
+signature, never by subject name — an ADCS CA key renewal keeps the DN and
+changes the key. Recovery needs no configuration and no new trust setting;
+`ACME_RA_ADCS_CA_BUNDLE` is TLS trust for the `/certsrv/` leg and is
+deliberately not reused as an issuing-CA pin.
+
+**Recovery repairs the input to the verifier and decides nothing.** Signature,
+freshness and monotonicity all still have to pass afterwards, with no
+exemptions, and the certificate stays `quarantined` on success. The recovered
+chain and its provenance — issuer fingerprints, subjects, and which stored
+certificate supplied each — commit in one transaction as
+`revocation-issuer-evidence-recovered`, and a compare-and-set means a chain the
+CA actually returned can never be overwritten.
+
+**The blocked state is now visible instead of being an indistinguishable
+repeating denial.** `GET /acme/admin/revocations/pending` marks an entry with no
+issuer material (`issuer_evidence`, `blocked_reason`, `recovery_action`), and
+the denial carries `reason_code: "issuer-evidence-missing"` — the one reason on
+this path that cannot be resolved by retrying.
+
+**Leafless orphans are listed separately.** When the leaf fetch itself failed
+there are no certificate bytes and no store row, so nothing automated can revoke
+it. Those incidents now appear under `leafless_incidents`, with
+`leafless_incidents_truncated` saying whether the scan window was exhausted, and
+they never drain — a record whose only resolution is a person going to the CA
+must not disappear because no automated path exists. Polling the view writes no
+audit rows.
+
+### `scripts/verify_crl_publication.py`: prove a revocation reached a published CRL (2026-09-05)
+
+New tool, and a lab-procedure fix behind it. Revoking at the CA and publishing a
+CRL are two operations, and the teardown procedure only ever wrote down the
+first — so one round left thirty certificates revoked-but-unpublished for five
+and a half hours, and on a one-week `CRLPeriod` would have left them that way
+for close to a week. Earlier validation-log entries assert "revoked … and the
+CRL republished"; at least one round did not.
+
+The script verifies from the CDP rather than from `certutil`'s exit code, and
+carries its controls, because a CRL lookup that matches nothing returns what a
+correct negative returns: the revoked serials are the positive control,
+`--absent` is the negative control, and `--min-crl-number` proves the document
+was published *after* the revocations rather than served from a cache. An
+unreachable CDP exits 2 — no evidence either way — distinct from the exit 1 that
+means the serials are genuinely not there. `docs/live-reproof-runbook.md` §E now
+requires it.
+
+
 ### The CRL age ceiling is calibrated from measurement, not derivation (2026-09-05)
 
 **Changed default: `ACME_RA_REVOCATION_CONFIRM_CRL_MAX_AGE_SECONDS` is now

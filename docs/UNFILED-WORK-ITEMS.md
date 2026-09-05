@@ -1428,6 +1428,17 @@ is wide enough that the conclusion is unlikely to move.
 
 ### 25. (design, medium) — NEW 2026-09-05, **CORRECTED same day**. **A transport-orphaned certificate has no issuer material, so its revocation can never be confirmed**
 
+> **IMPLEMENTED 2026-09-05 (agreed scope only).** Existing-chain recovery (1)
+> and blocked-state visibility (3) are in `src/acme_adcs_ra/issuer_recovery.py`,
+> `Store.list_certificate_chains` /
+> `Store.attach_recovered_chain_with_audit`, and the confirm + pending-list
+> routes; 21 tests in `tests/test_issuer_evidence_recovery.py`, mutation-proved
+> against five reverted fixes. All five numbered requirements below are
+> asserted by name. **Still open and deliberately not done:** the cold-start
+> inventory fallback, and CA-database reconciliation (2), which remains a
+> separate evidence policy. **Not yet exercised in a lab window** — no live
+> transport orphan has been recovered on the real store.
+
 > **Correction to this item's first draft, which was too broad and got the
 > remedy wrong.** It said quarantine means "the RA has the serial but no
 > chain", and proposed reusing `ACME_RA_ADCS_CA_BUNDLE` as issuer material.
@@ -1583,6 +1594,18 @@ Requirements the implementation must satisfy:
 ---
 
 ### 26. (bug, medium) — NEW 2026-09-05. **The teardown revokes at the CA but never republishes the CRL, so a session's revocations stay invisible to relying parties for up to a week**
+
+> **FIXED 2026-09-05.** All three parts of the fix landed:
+> `docs/live-reproof-runbook.md` §E now requires the republish *and* an
+> evidence-bearing verification from the CDP;
+> `scripts/verify_crl_publication.py` performs it with a positive control, a
+> negative control and a CRL-Number floor (10 tests, mutation-proved against
+> four reverted guards); and the sampler interaction is stated in the runbook so
+> a future session does not skip the republish to protect a publication cycle.
+> The gitignored lab harness (`samples/lab-harness/teardown-revoke.ps1`) carries
+> the equivalent inline check — its Python was smoke-tested against a real CRL
+> including all three failure modes, but **the PowerShell around it has not run
+> in a lab window yet.**
 
 **Observed live, and only by accident.** While completing the §A.2
 independent-client record, one certificate was revoked and the CRL published.

@@ -81,9 +81,22 @@ The monotonic watermark was proven against two genuine CRLs with a negative
 control. Full lab re-proof of the candidate: **72/74**, both failures explained
 and left visible (`CRL3` asserts the superseded rule; `Ld1` is the documented
 transport-failure residue). See the 2026-09-05 entry in
-`docs/pre-pilot-checklist.md`. **New: UNFILED item 25** — a quarantined
-certificate has no stored chain, so it can never be CRL-confirmed and its
-revocation never drains.
+`docs/pre-pilot-checklist.md`.
+
+**2026-09-05 (later still): items 25 and 26 implemented.** A **transport
+orphan** — a certificate the CA issued whose chain fetch failed — is stored with
+an empty chain, so CRL evidence had no issuer certificate and its confirmation
+was refused for ever. The RA now recovers the issuer material from chains it
+already holds (same enrollment-leg provenance), selecting the candidate that
+**signed** the leaf rather than one whose name matches, and then runs the
+ordinary verifier with no exemptions. The blocked state is reported on
+`GET /acme/admin/revocations/pending`, and **leafless** orphans — no bytes, no
+store row, no automated path — are listed separately so they cannot be folded
+into the recoverable class. Item 26: the lab teardown revoked at the CA and
+never republished the CRL, leaving a session's revocations invisible to relying
+parties for up to a `CRLPeriod`; `scripts/verify_crl_publication.py` and
+runbook §E now prove publication from the CDP with both controls. **Neither has
+run in a lab window yet.**
 
 **2026-09-05 maintenance candidate:** issued-certificate validation was
 extracted from `finalize.py` without changing its logic or call order; the CRL
