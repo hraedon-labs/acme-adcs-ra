@@ -2253,7 +2253,14 @@ class TestAdminPendingRevocations:
             headers={"Authorization": "Bearer test-admin-token-0123456789abcdef-32+"},
         )
         assert resp.status_code == 200
-        assert resp.json() == {"pending_revocations": []}
+        # The exact body, not a subset: the leafless view (UNFILED item 25.5)
+        # must report "none in the window scanned" explicitly rather than by
+        # omission, so an empty list and a truncated scan cannot look alike.
+        assert resp.json() == {
+            "pending_revocations": [],
+            "leafless_incidents": [],
+            "leafless_incidents_truncated": False,
+        }
 
     def test_pending_revocations_returns_revoked_cert(
         self,

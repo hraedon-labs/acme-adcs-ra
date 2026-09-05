@@ -150,6 +150,15 @@ COALESCED_EVENT_TYPES = frozenset(
         "admin-revocation-confirm-denied",
         "admin-revocation-confirm-deferred",
         "admin-list-pending-revocations",
+        # A recovery that finds nothing (UNFILED item 25) is retried by the
+        # revocation sync agent on its interval, forever, for as long as the
+        # certificate stays blocked — the same benign unbounded growth the
+        # denial events above are coalesced for. The window's first row keeps
+        # the full finding (candidates considered, chains scanned) and the
+        # replay count stays exact. The successful counterpart,
+        # `revocation-issuer-evidence-recovered`, is deliberately NOT here: the
+        # compare-and-set means it can fire at most once per certificate.
+        "revocation-issuer-evidence-recovery",
     }
 )
 
