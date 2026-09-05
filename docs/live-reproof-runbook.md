@@ -180,6 +180,57 @@ Leave the CA and RA exactly as found. **Do not** revert the E-1 remediation (the
 enrollment gMSA's restricted primary group is a permanent hardening, not a test
 artifact).
 
+**Republish the CRL after the revocation loop, and PROVE it from the CDP.**
+Revoking at the CA and publishing a CRL are two operations, and only the first
+used to be written down here. Revoking without publishing leaves every
+certificate the session created still accepted by every relying party until the
+next scheduled publication — on a one-week `CRLPeriod`, for close to a week.
+
+That is not lab housekeeping. A certificate the CA considers revoked but that
+nobody can see as revoked is precisely the state this product's revocation story
+exists to prevent, and leaving the lab in it also means the *next* session's
+`require_crl_evidence` checks and the watermark's first-use baseline run against
+a CRL silently missing the previous session's revocations — which makes any
+cross-session claim about revocation latency un-measurABLE, in the same way item
+22 made the CRL age un-measurable.
+
+It went unnoticed for rounds because the validation log asserted it. Entries for
+earlier rounds say "revoked … and the CRL republished"; at least one round did
+not. Same shape as the preserve step before it: the step was believed done
+because the sentence describing it was written, and nothing checked. So:
+
+1. run `certutil -config <CA> -CRL` after the revocation loop;
+2. **verify from the CDP, not from `certutil`'s exit code.**
+   `scripts/verify_crl_publication.py` is committed for this and takes the
+   controls with it:
+
+   ```bash
+   python scripts/verify_crl_publication.py \
+       --url <CDP-URL> \
+       --revoked <SERIAL> [--revoked <SERIAL> ...] \
+       --absent <UN-REVOKED-SERIAL> \
+       --min-crl-number <NUMBER OBSERVED BEFORE THE REPUBLISH>
+   ```
+
+   `CRL-PUBLICATION-VERIFIED …` on stdout is the required evidence; its absence
+   means the teardown did not prove publication, whatever else it printed. The
+   three checks are there because absence proves nothing on its own — a CRL
+   lookup that matches nothing returns what a correct negative returns. The
+   revoked serials are the **positive control** (a broken lookup reads them as
+   absent and fails), `--absent` is the **negative control** (a lookup that
+   matches everything fails), and `--min-crl-number` proves the document is one
+   published *after* the revocations rather than a cached pre-revocation CRL.
+   An unreachable CDP exits **2**, distinct from the **1** that means "checked,
+   and the serials are not there": a transport failure is no evidence either
+   way and must not be recorded as either verdict.
+
+**Interaction with the sampler, so a future session does not get this backwards.**
+A forced republication truncates the current publication cycle, which costs
+`scripts/sample_crl_age.py` that cycle as a clean natural observation. It
+**cannot** corrupt the served-age floor — a truncated cycle only ever serves
+ages below the running maximum, so it can move neither bound. The trade is real
+and one-sided: do not skip the republish to protect the sampler.
+
 **Preserve the post-run store BEFORE restoring it.** Copy the live store — all
 three SQLite files, and only after the app pool is confirmed *stopped* — to a
 dated directory that the restore does not touch, and fail the teardown if that
