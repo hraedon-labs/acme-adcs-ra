@@ -40,7 +40,7 @@ requires-dist = [
     { name = "pyspnego", marker = "sys_platform == 'win32'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "requests", specifier = ">=2.32" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16,<1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16,<0.17" },
     { name = "types-requests", marker = "extra == 'dev'" },
     { name = "uvicorn", extras = ["standard"] },
 ]
