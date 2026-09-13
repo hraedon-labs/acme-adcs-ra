@@ -24,7 +24,7 @@ acme-adcs-ra = "acme_adcs_ra.__main__:main"
 # exact version in uv.lock. CI installs via `uv sync --locked`, so the
 # lockfile is the single source of truth at install time. Bump deliberately
 # (the monthly rot-canary surfaces when a bump is due).
-dev = ["pytest", "httpx", "ruff>=0.16,<1", "mypy==2.1.0", "types-requests"]
+dev = ["pytest", "httpx", "ruff>=0.16,<0.17", "mypy==2.1.0", "types-requests"]
 
 [build-system]
 requires = ["hatchling"]
