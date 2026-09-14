@@ -10,7 +10,7 @@ from types import ModuleType
 
 import pytest
 
-_ENV_VAR = "ACME_RA_FORBIDDEN_IDENTIFIERS"
+_ENV_VAR = "FORBIDDEN_IDENTIFIERS"
 
 
 def _load_checker() -> ModuleType:
