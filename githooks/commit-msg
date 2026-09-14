@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# acme-ra commit-message identifier gate.
+# acme-adcs-ra commit-message identifier gate.
 #
 # The pre-commit hook scans staged file CONTENT. Commit messages were never
 # scanned by anything — not by the hook, not by CI. That blind spot is not
@@ -18,20 +18,20 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 message_file="$1"
 
-if [ -z "${ACME_RA_FORBIDDEN_IDENTIFIERS:-}" ]; then
+if [ -z "${FORBIDDEN_IDENTIFIERS:-}" ]; then
   for candidate in \
     "$repo_root/.identifiers-denylist.local" \
     "$HOME/.config/agent-suite/forbidden-identifiers"; do
     if [ -f "$candidate" ]; then
-      ACME_RA_FORBIDDEN_IDENTIFIERS="$(cat "$candidate")"
-      export ACME_RA_FORBIDDEN_IDENTIFIERS
+      FORBIDDEN_IDENTIFIERS="$(cat "$candidate")"
+      export FORBIDDEN_IDENTIFIERS
       break
     fi
   done
 fi
 
-if [ -z "${ACME_RA_FORBIDDEN_IDENTIFIERS:-}" ]; then
-  echo "acme-ra commit-msg: identifier gate INACTIVE — no denylist found." >&2
+if [ -z "${FORBIDDEN_IDENTIFIERS:-}" ]; then
+  echo "acme-adcs-ra commit-msg: identifier gate INACTIVE — no denylist found." >&2
   exit 0
 fi
 

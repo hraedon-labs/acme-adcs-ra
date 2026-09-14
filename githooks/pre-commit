@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# acme-ra local identifier gate (project-initiation scaffold).
+# acme-adcs-ra local identifier gate (project-initiation scaffold).
 #
 # Mirrors the CI `identifier-gate` job so a forbidden work-domain identifier is
 # caught BEFORE it lands in a commit. The CI gate only runs after push, so by the
@@ -19,7 +19,7 @@
 # never quote it.
 #
 # It is resolved, in order, from:
-#   1. $ACME_RA_FORBIDDEN_IDENTIFIERS            (already exported, e.g. CI)
+#   1. $FORBIDDEN_IDENTIFIERS            (already exported, e.g. CI)
 #   2. <repo>/.identifiers-denylist.local            (gitignored, per-repo)
 #   3. ~/.config/agent-suite/forbidden-identifiers   (shared canonical set)
 #
@@ -32,21 +32,21 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 
-if [ -z "${ACME_RA_FORBIDDEN_IDENTIFIERS:-}" ]; then
+if [ -z "${FORBIDDEN_IDENTIFIERS:-}" ]; then
   for candidate in \
     "$repo_root/.identifiers-denylist.local" \
     "$HOME/.config/agent-suite/forbidden-identifiers"; do
     if [ -f "$candidate" ]; then
-      ACME_RA_FORBIDDEN_IDENTIFIERS="$(cat "$candidate")"
-      export ACME_RA_FORBIDDEN_IDENTIFIERS
+      FORBIDDEN_IDENTIFIERS="$(cat "$candidate")"
+      export FORBIDDEN_IDENTIFIERS
       break
     fi
   done
 fi
 
-if [ -z "${ACME_RA_FORBIDDEN_IDENTIFIERS:-}" ]; then
-  echo "acme-ra pre-commit: identifier gate INACTIVE — no denylist found." >&2
-  echo "  Set \$ACME_RA_FORBIDDEN_IDENTIFIERS, or create .identifiers-denylist.local (gitignored)" >&2
+if [ -z "${FORBIDDEN_IDENTIFIERS:-}" ]; then
+  echo "acme-adcs-ra pre-commit: identifier gate INACTIVE — no denylist found." >&2
+  echo "  Set \$FORBIDDEN_IDENTIFIERS, or create .identifiers-denylist.local (gitignored)" >&2
   echo "  or ~/.config/agent-suite/forbidden-identifiers to enable it. Allowing commit." >&2
   exit 0
 fi
