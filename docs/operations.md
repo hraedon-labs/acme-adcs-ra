@@ -1139,6 +1139,85 @@ the serverAuth-only blast-radius bound depends on. Check:
   and **was** honoured (the verifiers are the only thing standing between a
   template change and a clientAuth-capable certificate reaching a client).
 
+### Transport orphans: two classes, two different actions
+
+A **transport orphan** is a certificate the CA issued and the RA could not
+finish collecting. There are two shapes and they need different things from you;
+`GET /acme/admin/revocations/pending` now reports them separately rather than
+leaving both to be reconstructed from the audit trail.
+
+**1. The leaf is in hand, the chain is not** — the chain fetch or the
+chain-binds-to-leaf check failed. The certificate is stored `quarantined` with
+its serial and ReqID and it goes off the CA through the ordinary pull-agent
+loop. What used to make it a dead end is that CRL evidence verifies the CRL's
+signature against the issuing CA certificate taken from **the certificate's own
+stored chain**, and this row has none — so with
+`ACME_RA_REVOCATION_CONFIRM_REQUIRE_CRL_EVIDENCE=true` its confirmation was
+refused for ever, for a certificate that is live at the CA.
+
+The RA now **recovers the issuer material** on the confirm path, from chains it
+already holds: every successful issuance stored the chain the CA returned over
+the same authenticated enrollment leg, so the material has the same provenance
+as the orphan itself. The candidate that actually **signed** the leaf is chosen
+by signature (`verify_directly_issued_by`), never by subject name — an ADCS CA
+key renewal keeps the DN and changes the key, so a name match picks the wrong
+generation half the time. Recovery runs on the next confirmation attempt for that serial and needs no
+new configuration — though it is reached only where
+`ACME_RA_REVOCATION_CONFIRM_CRL_URL` is set, since a deployment that gathers no
+CRL evidence has nothing for it to unblock. And:
+
+* it repairs the **input** and decides nothing. Signature, freshness and
+  monotonicity all still have to pass on their own terms afterwards;
+* it never overwrites a chain the CA actually returned (compare-and-set on an
+  empty chain), and it writes the chain and its provenance in one transaction —
+  `revocation-issuer-evidence-recovered` names the fingerprints, the subjects
+  and which stored certificate supplied each one;
+* it leaves the certificate `quarantined`. Quarantine is a statement about the
+  certificate; pending-revocation is a statement about the CA.
+
+`ACME_RA_ADCS_CA_BUNDLE` is **not** used for this and must never be. It is TLS
+trust for the `/certsrv/` leg; reusing it as an issuing-CA pin would quietly
+turn "trust this for transport" into "trust this to attest issuance".
+
+If nothing in the store signed the leaf — a cold store, or a CA whose chain the
+RA has never successfully collected — the entry is reported as blocked rather
+than retried in silence:
+
+```json
+{ "serial": "...", "status": "quarantined",
+  "issuer_evidence": "missing",
+  "blocked_reason": "issuer-evidence-missing",
+  "recovery_action": "..." }
+```
+
+and the denial carries `reason_code: "issuer-evidence-missing"`. That reason
+code is the one denial on this path that **cannot** be resolved by retrying;
+every other one ("CDP unreachable", "serial not listed", "regressed") means
+"not yet". It clears itself as soon as the store holds any complete chain from
+that CA; until then, reconcile the certificate at the CA by ReqID.
+
+**2. Only the ReqID is known** — the leaf fetch itself failed, so there are no
+certificate bytes and **no store row at all**. Nothing automated can revoke it:
+the sync agent works from serials and there is no serial. These appear under
+their own key:
+
+```json
+{ "leafless_incidents": [
+    { "req_id": "812", "order_id": "...", "observed_at": "...",
+      "reason": "...", "recovery_action": "revoke it by ReqID at the CA by hand" }
+  ],
+  "leafless_incidents_truncated": false }
+```
+
+They are reconstructed from the audit trail, which is the only place they exist,
+so `leafless_incidents_truncated` says whether the scan window was exhausted —
+an empty list that means "none" and one that means "none *in the window*" are
+different claims. They also **never drain**: there is no acknowledgement state,
+so an incident stays visible for as long as its audit row does. That is
+deliberate. A record whose only resolution is a person going to the CA must not
+disappear because nothing automated can close it. Polling this view writes no
+audit rows, so a permanent incident does not grow the audit table.
+
 ### Reason 7 is rejected
 
 RFC 5280 reason 7 ("unused") is rejected by the RA's `revokeCert` route AND

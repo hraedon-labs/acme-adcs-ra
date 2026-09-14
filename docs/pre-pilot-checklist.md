@@ -295,6 +295,103 @@ engineered to. Until then it has not — regardless of a green local test run.
 
 ## Validation log
 
+- **2026-09-05 (second session) — `8f1685e` (the PR #16 merge commit): the
+  §A.2 independent-client record COMPLETED, and the MSI refusals cleared after
+  six rounds.** Deployed over the running v1.12.0. Note the version string is
+  **not** a deploy discriminator — `pyproject` still declares 1.12.0 because the
+  watermark is unreleased — so the deploy was confirmed by content:
+  `issued_certificate_validation.py` present *and*
+  `DEFAULT_CRL_MAX_AGE_SECONDS=626400`.
+
+  **Merge commit behaves as the branch did: A 14/14, A1 13/13, CRL 7/7.**
+
+  **§A.2, the item that blocked a tag — COMPLETE.** Certify the Web **7.2.0.0**
+  (`Certify.ACME.Anvil/3.3.4.0`, .NET 10.0.11) from a separate domain host, a
+  newer client than August's 7.1.1.0/3.3.3. Issuance, renewal, retrieval and
+  revocation, on a dedicated EAB kid so the record separates from the harness.
+
+  - **POST-as-GET-only is proven twice, on two independent orders.** Issuance:
+    16 POST / 19 HEAD / 3 GET, the GETs being `/` and `/directory` only.
+    Renewal: 15 POST / 18 HEAD and **zero GET of any kind**. `STATUS-405-COUNT=0`
+    and `ACME-RESOURCE-GET-COUNT=0` throughout. The removed GET forms are not a
+    client-compatibility problem; nothing to file against CtW.
+  - The renewal reused the account (proven two ways: `NEW-ACCT-COUNT=0` in the
+    IIS log *and* identical `account_id` in the store) and is a real second
+    issuance, not a cached replay (different order, serial, key and fingerprint;
+    the CA recorded two distinct request IDs, 761 and 762).
+  - **Revocation is where the step earned its place.** The client reported
+    success, the RA returned an empty 200, the store said `revoked` — and the CA
+    said `Disposition: 0x14 (20) Issued`, revocation date EMPTY. Three layers
+    agreed and the authoritative one disagreed. Designed behaviour (the
+    enrollment gMSA holds no officer rights; the audit row says
+    `revocation_scope="ra-store-only"` rather than overclaiming), and exactly
+    why §A.2 forbids treating the client's success as evidence. The CA query
+    carried a control so `0 Rows` could not pass for "not revoked".
+  - CA-side revocation and publication driven separately and verified **from the
+    CDP**, not from `certutil`'s exit code: CRL 129 → 130, target serial listed,
+    with a negative control (the un-revoked issuance cert, absent) and a positive
+    control (an arbitrary existing entry, found).
+  - Queue confirmation returned `verification: crl-verified`; pending went
+    **5 → 6 → 5**, evidenced from the RA's own audit log. The **monotonic
+    watermark's first-use baseline was taken live** (`crl_watermark_verdict:
+    "first"`, CRL 130) — the earlier 12/12 proof used a stand-in serving captured
+    CRLs. The two CRL config toggles this required were removed immediately after
+    and verified absent.
+  - **Not covered, recorded as unproven:** the CA-side revoke was performed by a
+    CA local administrator, not by a template-scoped revoker gMSA running
+    `Sync-Revocations.ps1`. The §B compromise-independence bound was not
+    exercised; `OfficerRights` was deliberately not provisioned (hand-built blobs
+    are known to be rejected by this CA and to break all officer operations until
+    removed). The confirmation *code path* is proven, being the same endpoint the
+    scheduled task calls.
+
+  **MSI no-digest and staged-copy refusals — PROVEN LIVE, clearing a six-round
+  debt.** Two facts unblocked it. A second Windows Server 2025 host in the
+  estate (the one running the independent ACME client) has the handler absent
+  both ways, so `Test-HttpPlatformHandler` is false; and
+  **`Install-Prerequisites` runs at line 785, before Python discovery and the
+  venv build**, so the refusals throw long before an interpreter is needed — that
+  host has no Python and it did not matter. Roots pointed at throwaway paths.
+  All three refusals fired: `http://` (InstallVerifyLib:147), **no digest**
+  (InstallVerifyLib:152), and the **staged-copy** mismatch
+  (install-windows:482) against the genuine Microsoft MSI (Authenticode Valid,
+  `CN=Microsoft Corporation`) with one nibble changed in the digest. The reported
+  `got` value is the hash of the *staged copy*, so the artifact was copied into
+  protected staging and hashed there before rejection. **`msiexec` never opened
+  it — proven, not inferred:** handler still absent, zero `MsiInstaller` events
+  since a pre-run mark, **with a control showing three such events do exist in
+  that log**. Host restored; post-state diffs identical to pre-state (the one
+  mutation, `Web-IP-Security`, removed; `RestartNeeded=No`). The 2026-08-24
+  clearance was against the v1.10.0 tarball and the installer has changed three
+  times since, so this debt was real rather than bookkeeping.
+
+  **NEW FINDING, filed as UNFILED item 26.** One certificate was revoked and the
+  CRL gained 31 entries. The other 30 were the *previous* session's teardown
+  revocations, sitting unpublished for ~5.5 hours because §E says to revoke and
+  restore but never says to republish. Earlier validation-log entries assert
+  "revoked … and the CRL republished" — a claim at least one round did not
+  satisfy. On a 1-week `CRLPeriod` the exposure approaches a week.
+
+  **Teardown.** Post-run store preserved *before* the restore
+  (`POSTRUN-PRESERVED {"audit_log": 752, "certificates": 16, "orders": 45}`,
+  `postrun-store-20260905-015115`). All three certificates this session caused
+  the CA to issue were revoked **from the CA-side query**, republished, and
+  `STILL-ISSUED=0` cross-checked against a control returning 3 rows; the CDP was
+  re-fetched to confirm CRL 131 lists all three (applying item 26's own fix).
+  Store restored fingerprint-identical table-by-table including
+  `crl_watermark: 0`; throwaway EAB, admin/confirm tokens and both CRL toggles
+  verified gone; pool Started as found.
+
+  **Deviation, flagged deliberately:** the lab is left on **`8f1685e`**, not on
+  the released `v1.12.0`, contrary to the usual "leave the lab on the released
+  tag" convention. `8f1685e` is `main`, is now the most-proven build, and is the
+  intended next tag. Roll back if the lab is to be parked on a release.
+
+  **Not run:** hosted CI on this commit; the §B two-identity topology; the
+  fourth MSI case (correct digest → install), deliberately, since only the
+  refusals were owed and it would have left the handler on a host with no use
+  for it.
+
 - **2026-09-05 — review of `610a5a3` and full live re-proof, run by Opus 5
   against a change authored by another agent.** Same split as 2026-08-27: the
   reviewer did not write the change.

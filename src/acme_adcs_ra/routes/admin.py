@@ -28,6 +28,7 @@ from acme_adcs_ra.crl_evidence import (
 )
 from acme_adcs_ra.finalize import _refresh_order_or_500
 from acme_adcs_ra.http_body import read_body_limited
+from acme_adcs_ra.issuer_recovery import recover_issuer_chain
 from acme_adcs_ra.serializers import _order_to_admin_json, _order_to_json
 from acme_adcs_ra.store import (
     CertificateRecord,
@@ -59,6 +60,141 @@ def _crl_published_from(raw_body: bytes) -> bool:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return False
     return isinstance(body, dict) and body.get("crl_published") is True
+
+
+ISSUER_EVIDENCE_MISSING = "issuer-evidence-missing"
+
+# What an operator should do about a certificate stuck in that state. Carried in
+# the audit trail and in the pending-revocation feed so the action travels with
+# the finding instead of living only in a document.
+ISSUER_EVIDENCE_RECOVERY_ACTION = (
+    "the RA holds this certificate but not the CA certificate that signed it, "
+    "so no CRL signature can be verified for it. Recovery runs automatically on "
+    "the next confirmation attempt, once revocation_confirm_crl_url is set and "
+    "the store holds any complete chain from the same issuing CA; until then, "
+    "reconcile it at the CA by ReqID."
+)
+
+
+def _recover_issuer_evidence(
+    ctx: ServerContext, cert: CertificateRecord
+) -> CertificateRecord:
+    """Repair a certificate with no issuer material, and return the live row.
+
+    UNFILED item 25. A transport orphan whose chain fetch failed is stored with
+    its leaf and an empty chain, so CRL evidence can never be verified for it
+    and, under ``require_crl_evidence``, its revocation can never be confirmed —
+    permanently, for a certificate that is live at the CA.
+
+    **This repairs the input to the verifier. It decides nothing.** The
+    recovered chain then goes through the ordinary signature, freshness and
+    monotonicity checks with no exemption of any kind; finding an issuer is
+    evidence repair, not revocation confirmation. Status is untouched for the
+    same reason it is untouched by a successful confirmation: quarantine is a
+    statement about the certificate, pending-revocation is a statement about the
+    CA, and they are not the same fact.
+
+    Called from inside the CRL evidence gate, so it inherits that gate's
+    single-flight per certificate row and runs off the event loop. That also
+    means it is reached **only when a CRL URL is configured** — the caller
+    returns before this on an unconfigured deployment. Deliberate: recovery
+    exists to unblock CRL evidence, and a deployment that gathers none has
+    nothing to unblock, so the confirm path should not be writing to the store
+    on its behalf. The pending feed still labels such a row `issuer_evidence:
+    missing`, which stays true either way.
+
+    Never raises: the contract of the confirm path is that an evidence problem
+    is a denial, never a 500. A failed recovery returns the record unchanged and
+    the caller denies with the reason it would have denied with anyway.
+    """
+    if cert.chain_pem:
+        return cert
+    try:
+        outcome = recover_issuer_chain(
+            cert.cert_pem, ctx.store.list_certificate_chains()
+        )
+    except Exception:  # noqa: BLE001 - recovery must never break confirmation
+        logger.warning(
+            "issuer-evidence recovery failed for certificate %s", cert.id,
+            exc_info=True,
+        )
+        return cert
+
+    if not outcome.recovered:
+        # Audited as a failure on purpose. "Recovery was attempted and found
+        # nothing, over N distinct candidates in M chains" is the fact that
+        # tells an operator whether to wait for the store to fill or to go and
+        # reconcile at the CA by hand. An unrecorded attempt reads identically
+        # to no attempt at all.
+        _audit(ctx,
+            event_type="revocation-issuer-evidence-recovery",
+            account_id=cert.account_id,
+            order_id=cert.order_id,
+            outcome="failed",
+            details={
+                "certificate_id": cert.id,
+                "serial": cert.serial_number,
+                # Spelled as a literal, not as `ISSUER_EVIDENCE_MISSING`: the
+                # coalescing key must be provably server-chosen *syntactically*
+                # (tests/test_audit_coalescing_enumeration.py), and a name is
+                # not. The two are pinned together in
+                # tests/test_issuer_evidence_recovery.py so they cannot drift.
+                "reason_code": "issuer-evidence-missing",
+                "detail": outcome.detail,
+                "chains_scanned": outcome.rows_scanned,
+                "candidates_considered": outcome.candidates_considered,
+                "scan_truncated": outcome.truncated,
+                "recovery_action": ISSUER_EVIDENCE_RECOVERY_ACTION,
+            },
+        )
+        return cert
+
+    try:
+        record, event = ctx.store.attach_recovered_chain_with_audit(
+            cert.id,
+            chain_pem=outcome.chain_pem,
+            event_type="revocation-issuer-evidence-recovered",
+            outcome="success",
+            account_id=cert.account_id,
+            order_id=cert.order_id,
+            details={
+                "certificate_id": cert.id,
+                "serial": cert.serial_number,
+                "reason_code": "issuer-evidence-recovered",
+                # Where the material came from is part of the evidence. Without
+                # it a recovered chain is indistinguishable from one the CA
+                # returned at issuance, which is a claim the RA cannot make.
+                "issuer_source": "stored-chain",
+                "issuer_fingerprints": outcome.fingerprints,
+                "issuer_subjects": outcome.subjects,
+                "source_certificate_ids": outcome.source_certificate_ids,
+                "chains_scanned": outcome.rows_scanned,
+                "candidates_considered": outcome.candidates_considered,
+                "detail": outcome.detail,
+            },
+        )
+    except Exception:  # noqa: BLE001 - recovery must never break confirmation
+        logger.warning(
+            "persisting recovered issuer evidence failed for certificate %s",
+            cert.id,
+            exc_info=True,
+        )
+        return cert
+
+    if record is None:
+        # The compare-and-set found a chain already there — a concurrent
+        # confirmation repaired it first. Read the row back rather than using
+        # the stale one; the other writer's chain is as good as ours and there
+        # is nothing to audit twice.
+        return ctx.store.get_certificate(cert.id) or cert
+    if event is not None:
+        emit_audit_hook(ctx, event)
+    logger.info(
+        "recovered issuer evidence for certificate %s from stored chains: %s",
+        cert.id,
+        outcome.detail,
+    )
+    return record
 
 
 def _crl_evidence_for(
@@ -127,6 +263,11 @@ def _crl_evidence_for(
         )
 
     try:
+        # Repair missing issuer material BEFORE the watermark read, because the
+        # watermark identity is derived from the certificate's stored chain too
+        # — an unrepaired orphan has no key to look up and would take the
+        # first-use path against a CA the RA has demonstrably seen before.
+        cert = _recover_issuer_evidence(ctx, cert)
         issuer_key = crl_watermark_key(cert.cert_pem, cert.chain_pem)
         if issuer_key is not None:
             watermark = ctx.store.read_crl_watermark(issuer_key)
@@ -510,6 +651,72 @@ async def list_orders(
     )
 
 
+# How many transport-orphan audit events are examined when assembling the
+# leafless view. The events are rare (one per orphaned enrollment), and the
+# bound exists so a read cannot walk an unbounded audit table.
+LEAFLESS_SCAN_LIMIT = 500
+
+LEAFLESS_RECOVERY_ACTION = (
+    "the CA issued this certificate but the RA never received its bytes, so "
+    "there is no store row and no serial. It cannot be revoked by the sync "
+    "agent: revoke it by ReqID at the CA by hand."
+)
+
+
+def _leafless_orphan_incidents(
+    ctx: ServerContext, *, limit: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """Transport orphans that produced NO certificate row (UNFILED item 25.5).
+
+    Two shapes reach here, and they need the same operator action: the CA
+    issued but the RA never received the certificate bytes (nothing to key a
+    row on), and the bytes arrived but the quarantine write itself failed.
+    Both are live at the CA, absent from the store, and unreachable by any
+    automated path.
+
+    They are read out of the audit trail because that is the only place they
+    exist. Reconstructed rather than stored, so the view is exact only within
+    the window scanned — which is why the caller is told whether it was
+    truncated. An empty list that might mean "beyond the window" and an empty
+    list that means "none" are different claims.
+
+    These never drain: there is no acknowledgement state, so an incident stays
+    visible for as long as its audit row survives retention. That is intended.
+    A record whose only resolution is a human going to the CA must not vanish
+    because nothing automated can close it.
+    """
+    events = ctx.store.list_audit_events(
+        event_type="finalize-enrollment-transport-orphan",
+        limit=LEAFLESS_SCAN_LIMIT,
+    )
+    incidents: list[dict[str, Any]] = []
+    for event in events:
+        details = event.get("details") or {}
+        if not isinstance(details, dict):
+            continue
+        # `is False`, not a falsy test. Every writer today states the key
+        # explicitly — the store's quarantine writer sets it True, the two
+        # unquarantinable branches set it False — so the two forms agree on
+        # today's data. They stop agreeing the moment an event omits the key,
+        # which a falsy test would read as "not quarantined" and list as
+        # needing manual CA revocation. The failure direction matters: this
+        # view's whole purpose is that everything in it genuinely has no
+        # automated path, and padding it with rows that do is how a list stops
+        # being read.
+        if details.get("quarantined") is not False:
+            continue
+        incidents.append({
+            "req_id": details.get("req_id") or "",
+            "order_id": event.get("order_id"),
+            "observed_at": event.get("timestamp"),
+            "reason": details.get("reason") or details.get("quarantine_error") or "",
+            "error": details.get("error") or "",
+            "recovery_action": LEAFLESS_RECOVERY_ACTION,
+        })
+    truncated = len(events) >= LEAFLESS_SCAN_LIMIT or len(incidents) > limit
+    return incidents[:limit], truncated
+
+
 # Administrative: list certificates the RA has marked revoked, for the
 # out-of-band CA-side revocation loop (WI-024). Read-only; the CA agent
 # pulls this view and runs certutil -revoke against the CA itself.
@@ -527,7 +734,7 @@ async def list_pending_revocations(
     for cert in certs:
         if cert.serial_number is None:
             continue
-        pending_revocations.append({
+        entry: dict[str, Any] = {
             "serial": cert.serial_number,
             "req_id": cert.metadata.get("req_id", ""),
             "reason": cert.revocation_reason,
@@ -537,7 +744,23 @@ async def list_pending_revocations(
             # served. Both must come off the CA, but the operator should be
             # able to tell a routine revocation from a template misconfiguration.
             "status": cert.status,
-        })
+        }
+        # UNFILED item 25, part 3: make the blocked state visible here rather
+        # than only as a repeating denial in the audit trail.
+        #
+        # The test is the *narrow* one — an empty stored chain — because that is
+        # exactly what this read can establish without verifying a signature per
+        # row. The signature-based determination of "which stored certificate
+        # actually signed this leaf" belongs on the confirm path, where recovery
+        # runs. So the positive claim made here is one that is always true when
+        # made; the absence of the field is not a promise that confirmation will
+        # succeed.
+        if not cert.chain_pem:
+            entry["issuer_evidence"] = "missing"
+            entry["blocked_reason"] = ISSUER_EVIDENCE_MISSING
+            entry["recovery_action"] = ISSUER_EVIDENCE_RECOVERY_ACTION
+        pending_revocations.append(entry)
+    leafless, leafless_truncated = _leafless_orphan_incidents(ctx, limit=limit)
     # 2026-08-25. This route is polled by the revocation sync task on a fixed
     # interval, forever, and every poll used to write a durable row. That grows
     # the audit table without bound in entirely BENIGN operation -- no attacker
@@ -549,6 +772,12 @@ async def list_pending_revocations(
     # because "the revocation host was handed these serials" is the audit trail
     # for what happens next. The event is also coalesced, which bounds the case
     # this skip cannot: a token holder polling a NON-empty list at line rate.
+    #
+    # Deliberately keyed on `pending_revocations` ALONE. Leafless incidents
+    # never drain — nothing automated can resolve them — so counting them as
+    # "this poll returned work" would restore exactly the unbounded audit growth
+    # in benign operation that the skip above exists to prevent, and would do it
+    # permanently rather than while there is work.
     if pending_revocations:
         _audit(ctx,
             event_type="admin-list-pending-revocations",
@@ -558,7 +787,17 @@ async def list_pending_revocations(
                 "reason_code": "pending-revocations-listed",
             },
         )
-    return JSONResponse(content={"pending_revocations": pending_revocations})
+    return JSONResponse(content={
+        "pending_revocations": pending_revocations,
+        # A separate key, not a fold into the list above: these have no
+        # certificate row, no serial, and no automated path off the CA. Merging
+        # them into the recoverable class would hand the sync agent serials it
+        # cannot act on, and hide the fact that a human has to.
+        "leafless_incidents": leafless,
+        # An empty list means "none in the window scanned", which is not the
+        # same claim as "none". Say which one this is.
+        "leafless_incidents_truncated": leafless_truncated,
+    })
 
 
 # Administrative: confirm that the CA-side CRL was written for a serial the
@@ -713,7 +952,32 @@ async def confirm_ca_revocation(
         # recorded but not acted on, so the denial there is about something else
         # (the serial is absent) and blaming the watermark would misdirect
         # whoever reads the trail.
-        if evidence is not None and evidence.regressed and not evidence.checked:
+        if evidence is not None and evidence.issuer_missing:
+            # The one denial on this path that CANNOT be resolved by retrying.
+            # Every other reason here says "not yet" — the CDP was unreachable,
+            # the serial is not listed, the document regressed. This one says
+            # "not ever, under this configuration", and a repeating denial that
+            # does not say so is indistinguishable in the trail from a CA that
+            # is merely slow to publish. The reason code and the recovery action
+            # are what make the difference visible to whoever reads it.
+            #
+            # Reached only after recovery has already been attempted and failed
+            # (see `_recover_issuer_evidence`), so it is a statement about the
+            # store as a whole, not about one unlucky row.
+            _audit(ctx,
+                event_type="admin-revocation-confirm-denied",
+                account_id=cert.account_id,
+                order_id=cert.order_id,
+                outcome="failed",
+                details={
+                    "serial": serial_upper,
+                    "reason": "issuer-evidence-missing",
+                    "reason_code": "issuer-evidence-missing",
+                    "crl_detail": detail,
+                    "recovery_action": ISSUER_EVIDENCE_RECOVERY_ACTION,
+                },
+            )
+        elif evidence is not None and evidence.regressed and not evidence.checked:
             _audit(ctx,
                 event_type="admin-revocation-confirm-denied",
                 account_id=cert.account_id,
