@@ -36,6 +36,11 @@ schema is `acme_adcs_ra` (underscores) — `--project acme-adcs-ra` is rejected
 by the name validator, which is worth knowing before concluding the store is
 down.
 
+**Re-checked 2026-09-05** — still blocked, same error, same six missing
+migrations `[45..50]`. Reads still work. Confirmed with the owner that
+`agent-notes` stays down pending the agent-operations-suite work, so this file
+remains the tracker; item 26 below was filed here rather than in the store.
+
 **Reconcile this file into regista once writes are restored, then delete it.**
 
 ---
@@ -1574,3 +1579,59 @@ Requirements the implementation must satisfy:
    cannot resolve them; they need an operator revoking by ReqID at the CA. They
    must not be folded into the recoverable class, and must not disappear from
    view because no automated path exists.
+
+---
+
+### 26. (bug, medium) — NEW 2026-09-05. **The teardown revokes at the CA but never republishes the CRL, so a session's revocations stay invisible to relying parties for up to a week**
+
+**Observed live, and only by accident.** While completing the §A.2
+independent-client record, one certificate was revoked and the CRL published.
+The CRL's entry count went **370 → 401**. One revocation, thirty-one new
+entries.
+
+The other thirty were `raproof-*` certificates that the **previous session's
+teardown** had revoked at the CA — 29 at `2026-09-05T02:40Z` and 1 at
+`04:26Z`, all reason `0x4 Superseded` — and never published. CRL 129 was
+published at `02:11Z`, *before* those revocations, and the sampler shows CRL
+Number 129 served continuously through `07:30Z`. They sat revoked-but-
+unpublished for ~5.5 hours and would have stayed that way until the next
+scheduled publication had this session not published for an unrelated reason.
+This CA has `CRLPeriod = 1 Week`, so worst-case exposure is close to a week.
+
+**§E says to revoke and restore. It does not say to republish** — and the
+validation-log entries for earlier rounds assert "revoked … and the CRL
+republished", a claim at least one round did not actually satisfy. That is the
+familiar shape: the step was believed done because the sentence describing it
+was written, and nothing checked.
+
+**Why this is not lab housekeeping.** A certificate the CA considers revoked
+but that no relying party can see as revoked is precisely the state this
+product's revocation story exists to prevent. Leaving the lab in it also means
+the *next* session's CRL-evidence checks — `require_crl_evidence`, and the
+monotonic watermark's first-use baseline — run against a CRL that is silently
+missing the prior session's revocations. And it makes any cross-session claim
+about revocation latency unmeasurable, in the same way item 22 made the CRL age
+unmeasurable: not un-measured, **un-measurABLE**.
+
+**Fix.**
+
+1. Add an explicit `certutil -config <CA> -CRL` to §E, after the revocation
+   loop.
+2. **Make it evidence-bearing rather than asserted.** Re-fetch the CDP and
+   assert both that the CRL Number advanced *and* that every serial the
+   teardown just revoked is listed — with a negative control, because a CRL
+   lookup that matches nothing returns the same "not found" as a correct
+   negative. A teardown step whose failure mode is silence needs the same
+   treatment §E already gives the preserve step: verify, do not assert.
+3. Note the interaction with `scripts/sample_crl_age.py`. A forced
+   republication truncates the current publication cycle. That **cannot**
+   corrupt the served-age floor — a truncated cycle only ever serves ages below
+   the running maximum, so it can move neither bound — but it does spend that
+   cycle as a clean natural observation. Worth saying out loud in the runbook so
+   a future session does not skip the republish to protect the sampler; the
+   trade is real but one-sided.
+
+**Cross-check performed:** the 31 rows were enumerated from the CA
+(`certutil -view -restrict "Disposition=21,RevokedEffectiveWhen>=…"`) and
+account exactly — 29 + 1 previous-session Superseded, plus 1 Unspecified from
+this session. `370 + 31 = 401`. Nothing in this run is unexplained.
