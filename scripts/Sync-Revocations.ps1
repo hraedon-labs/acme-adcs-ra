@@ -58,7 +58,19 @@
            at the CA and confirmed, or dry-run completed, or nothing pending)
       1  = the RA was unreachable or the pending endpoint returned an error
       2  = partial failure (one or more serials failed to revoke or to confirm;
-           see the per-serial log lines above)
+           see the per-serial log lines above). **Also returned by a DRY RUN
+           when the RA serves a malformed serial** -- see below.
+
+    Note on dry runs and exit 2. A dry run normally exits 0. It exits 2 if any
+    pending entry is refused by the serial-form check, because that refusal is
+    not a hypothetical: the RA really is serving a value this tooling will not
+    pass to certutil, and the entry will keep failing on every subsequent live
+    run. A dry run exists to report what a live run would hit, so reporting
+    "0 = fine" while the queue contains an unusable entry would be exactly the
+    false reassurance the dry run is meant to prevent. Nothing is sent to
+    certutil either way. (Found in adversarial review 2026-09-21, which
+    observed the script contradicting this docstring; the behaviour was judged
+    correct and the contract corrected to match it.)
 
 .PARAMETER RaBaseUrl
     The RA's base URL (e.g. "https://ra.WORK-DOMAIN.local"). The admin
@@ -424,6 +436,10 @@ foreach ($entry in $pending) {
     # batch. The malformed value is echoed for the investigator -- it is
     # evidence, and by this point it has been refused.
     if (-not (Test-CaSerialForm $serial)) {
+        # Counted as a failure in BOTH modes, so a dry run cannot report a
+        # clean queue that a live run would choke on. This makes a dry run
+        # exit 2 rather than 0; the exit-code contract above says so
+        # explicitly, because it was not obvious enough to survive review.
         $failed++
         [Console]::Error.WriteLine(
             ("[{0}/{1}] REFUSED: the RA returned a serial that is not plain hex: '{2}'. Skipping (nothing was sent to certutil)." -f $index, $total, $serial)
