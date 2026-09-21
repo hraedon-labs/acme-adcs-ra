@@ -424,6 +424,15 @@ if ($PSCmdlet.ParameterSetName -eq "Serial") {
     if ([string]::IsNullOrWhiteSpace($Serial)) {
         Die "-Serial is empty or whitespace." 3
     }
+    # The serial reaches certutil as an argument, and certutil gives some
+    # characters meaning there -- `-revoke` takes a COMMA-SEPARATED LIST, so
+    # `<real>,<other>` would revoke a second certificate that was never
+    # confirmed, never requester-checked, and never audited by the RA. Refuse
+    # before the first certutil call rather than after. See Test-CaSerialForm
+    # in scripts/lib/RevocationLib.ps1 for why this lives at the privileged end.
+    if (-not (Test-CaSerialForm $Serial)) {
+        Die ("-Serial '{0}' is not a plain hex serial." -f $Serial) 3
+    }
     # Re-pad to the CA database's stored form before any -restrict lookup: the
     # RA emits serials without a leading zero (Python format(n,'x')), while
     # ADCS stores the full byte string, and -restrict is an exact string match.

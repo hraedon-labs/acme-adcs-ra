@@ -252,6 +252,10 @@ Assert-PrivilegedScriptTreeTrusted -Root $PSScriptRoot `
     -AllowUntrusted:$AllowUntrustedScriptPath -RunTime
 
 . "$PSScriptRoot/lib/SyncLib.ps1"
+# Test-CaSerialForm lives beside Get-CaSerialForm rather than being copied
+# here: the validator and the normalizer have to agree on which spellings are
+# legitimate, and two copies drift.
+. "$PSScriptRoot/lib/RevocationLib.ps1"
 
 function Die([string]$Message, [int]$Code) {
     [Console]::Error.WriteLine("ERROR: $Message")
@@ -405,6 +409,27 @@ foreach ($entry in $pending) {
         $reason = [int]$entry.reason
     }
     $revokedAt = [string]$entry.revoked_at
+
+    # Validate what the RA sent BEFORE it becomes a child-process argument.
+    #
+    # This is the trust boundary the out-of-band revocation design exists to
+    # create: this host holds CA-officer rights and the RA deliberately does
+    # not, so a compromised or impersonated RA must not be able to steer
+    # certutil. $serial arrives as free-form JSON text and would otherwise
+    # travel straight to `certutil -revoke`, whose argument is a
+    # COMMA-SEPARATED LIST of serials.
+    #
+    # A bad entry is skipped and counted as a failure, not thrown: one
+    # malformed row must not strand every other pending revocation in the
+    # batch. The malformed value is echoed for the investigator -- it is
+    # evidence, and by this point it has been refused.
+    if (-not (Test-CaSerialForm $serial)) {
+        $failed++
+        [Console]::Error.WriteLine(
+            ("[{0}/{1}] REFUSED: the RA returned a serial that is not plain hex: '{2}'. Skipping (nothing was sent to certutil)." -f $index, $total, $serial)
+        )
+        continue
+    }
 
     if (-not $liveMode) {
         $dryRunCount++

@@ -93,6 +93,104 @@ Describe "Get-CaSerialForm" {
     }
 }
 
+Describe "Test-CaSerialForm" {
+    # The serial reaches certutil as an ARGUMENT. `certutil -revoke` documents
+    # its argument as a comma-separated LIST of serials, and `-restrict
+    # "SerialNumber=$s"` treats a comma as a second query clause -- so a
+    # non-hex serial is not a cosmetic problem at the CA-officer end.
+    #
+    # Nothing reachable emits one today (the RA serves canonical_serial() of a
+    # parsed certificate). The check guards the boundary, not a known input:
+    # Sync-Revocations takes this value from the RA's JSON over the network,
+    # and the RA is exactly the component that must NOT be able to drive
+    # certutil.
+
+    It "accepts every spelling Get-CaSerialForm already normalizes" {
+        # The over-strict direction is the dangerous one: refusing a
+        # legitimate serial is a containment failure. These must all pass.
+        foreach ($s in @(
+            "6C0000006E14EDCC",   # canonical: uppercase, even length
+            "6ab1c2",             # lowercase
+            "6AB1C",              # odd length (RA's format(n,'x') form)
+            "0x6AB1C2",           # operator copy-paste, 0x prefix
+            "0X6AB1C2",           # uppercase prefix
+            "  6AB1C2  ",         # surrounding whitespace
+            "0006AB1C2",          # zero-padded
+            "0",                  # the minimum
+            ("A" * 64)            # the documented ceiling
+        )) {
+            Test-CaSerialForm $s | Should -BeTrue -Because "'$s' is a legitimate serial spelling"
+        }
+    }
+
+    It "refuses a comma-separated list, which certutil -revoke would honour" {
+        Test-CaSerialForm "6AB1C2,DEADBEEF" | Should -BeFalse
+    }
+
+    It "refuses a value that would inject a second -restrict clause" {
+        Test-CaSerialForm "6AB1C2,Disposition=20" | Should -BeFalse
+    }
+
+    It "refuses whitespace-separated extra arguments" {
+        Test-CaSerialForm "6AB1C2 -config EVIL" | Should -BeFalse
+        Test-CaSerialForm "6AB1C2`tDEADBEEF" | Should -BeFalse
+    }
+
+    It "refuses an EMBEDDED newline, which the \\A..\\z anchors are for" {
+        # PowerShell's $ anchor matches before a trailing newline, so a naive
+        # '^[0-9A-Fa-f]+$' would accept a multi-line value on the strength of
+        # its first line alone. Test-CaSerialForm uses \A..\z instead.
+        Test-CaSerialForm "6AB1C2`nDEADBEEF" | Should -BeFalse
+        Test-CaSerialForm "6AB1C2`r`nDEADBEEF" | Should -BeFalse
+        Test-CaSerialForm "6AB1C2`n-config EVIL" | Should -BeFalse
+    }
+
+    It "ACCEPTS a trailing newline, because Trim removes it before use" {
+        # Not an inconsistency with the case above: Trim() strips leading and
+        # trailing whitespace (newlines included), and the trimmed value is
+        # exactly what Get-CaSerialForm hands to certutil. The character is
+        # gone by the time anything acts on it, so refusing here would reject
+        # a legitimate serial -- the containment-failure direction.
+        Test-CaSerialForm "6AB1C2`n" | Should -BeTrue
+        Test-CaSerialForm "`n6AB1C2`n" | Should -BeTrue
+        Get-CaSerialForm "6AB1C2`n" | Should -Be "6AB1C2"
+    }
+
+    It "refuses non-hex characters" {
+        foreach ($s in @("6AB1G2", "ZZZZ", "6AB1C2;", "6AB1C2&whoami", "../../etc", "6AB1C2%00")) {
+            Test-CaSerialForm $s | Should -BeFalse -Because "'$s' is not plain hex"
+        }
+    }
+
+    It "refuses empty, whitespace, and null" {
+        Test-CaSerialForm "" | Should -BeFalse
+        Test-CaSerialForm "   " | Should -BeFalse
+        Test-CaSerialForm $null | Should -BeFalse
+    }
+
+    It "refuses a serial longer than the documented ceiling" {
+        # Bounds the argument; 64 hex digits is 32 octets, well past RFC 5280's
+        # 20-octet cap and past anything the lab CA emits (32 and 38 digits).
+        Test-CaSerialForm ("A" * 65) | Should -BeFalse
+    }
+
+    It "refuses an 0x prefix with nothing after it" {
+        Test-CaSerialForm "0x" | Should -BeFalse
+    }
+
+    It "agrees with Get-CaSerialForm on everything it accepts" {
+        # The two must not disagree about which spellings are legitimate: a
+        # value this accepts but the normalizer mangles, or vice versa, is how
+        # the pair drifts apart. Every accepted value must normalize to plain
+        # even-length hex.
+        foreach ($s in @("6C0000006E14EDCC", "6ab1c2", "6AB1C", "0x6AB1C2", "  6AB1C2  ", "0")) {
+            $normalized = Get-CaSerialForm $s
+            $normalized | Should -Match '\A[0-9A-Fa-f]+\z'
+            ($normalized.Length % 2) | Should -Be 0
+        }
+    }
+}
+
 Describe 'Get-RevocationCompletionMessage' {
     # 2026-08-16 rescan F2. The default batch path passes -SkipPublishCrl, and
     # the old unconditional trailer told the operator the CRL was published

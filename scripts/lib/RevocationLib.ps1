@@ -52,6 +52,56 @@ function Get-CaSerialForm([string]$Serial) {
     return $s
 }
 
+# Longest serial this tooling will pass to certutil, in hex digits. RFC 5280
+# caps a serial at 20 octets (40 digits); 64 leaves generous headroom for a
+# non-conforming CA while still bounding the argument. The lab CA's 61 issued
+# serials measured 32 and 38 digits (see Get-CaSerialForm above).
+$script:MaxSerialHexDigits = 64
+
+# Is this a plain hex serial in one of the spellings the revocation tooling
+# accepts?
+#
+# The check exists because $Serial reaches `certutil` as an ARGUMENT, and
+# certutil's own grammar gives some characters meaning:
+#
+#   * `certutil -revoke` documents its argument as a COMMA-SEPARATED LIST of
+#     serials, so `<real>,<other>` revokes two certificates. No shell, no
+#     quoting trick, no PowerShell native-argument-passing bug is needed --
+#     it is simply another argument.
+#   * `-restrict "SerialNumber=$s"` is a query clause, and a comma starts a
+#     second clause there too.
+#
+# Nothing reachable emits such a value today: the RA only ever serves
+# canonical_serial() of a parsed certificate, which is hex by construction.
+# The reason to check anyway is where the value COMES FROM. Sync-Revocations
+# takes it from the RA's JSON over the network and hands it to a certutil
+# invocation running with CA-officer rights -- and this project's whole
+# out-of-band revocation design exists so that compromising the RA does NOT
+# confer those rights (threat-model section 4.A; the enrollment gMSA holds no
+# Manage-CA). Validating here keeps that boundary a property of the privileged
+# script rather than a property of the RA staying honest.
+#
+# Deliberately NOT stricter than Get-CaSerialForm is lenient. An over-strict
+# pattern refuses a LEGITIMATE revocation, which is a containment failure --
+# the worse direction of the two. Every spelling the normalizer already
+# accepts (lowercase, `0x`-prefixed, odd-length, surrounded by whitespace) is
+# accepted here.
+function Test-CaSerialForm([string]$Serial) {
+    if ([string]::IsNullOrWhiteSpace($Serial)) { return $false }
+    $s = $Serial.Trim()
+    if ($s.StartsWith("0x", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $s = $s.Substring(2)
+    }
+    if ($s.Length -lt 1 -or $s.Length -gt $script:MaxSerialHexDigits) { return $false }
+    # -cmatch, not -match: the case-insensitive form is the default and the
+    # character class already covers both cases, but pinning it makes the
+    # intent explicit and immune to a caller changing $PSDefaultParameterValues.
+    # Anchors are ^...$ and PowerShell's $ tolerates a trailing newline, so the
+    # \A...\z form is used instead -- a serial with an embedded newline would
+    # otherwise pass and reach the argument.
+    return $s -cmatch '\A[0-9A-Fa-f]+\z'
+}
+
 # The operator-facing completion text for a single revocation.
 #
 # 2026-08-16 rescan F2: this used to be an unconditional trailer on
