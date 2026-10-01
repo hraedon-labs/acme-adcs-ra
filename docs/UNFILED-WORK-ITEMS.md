@@ -1598,8 +1598,10 @@ unpublished for ~5.5 hours and would have stayed that way until the next
 scheduled publication had this session not published for an unrelated reason.
 This CA has `CRLPeriod = 1 Week`, so worst-case exposure is close to a week.
 
-**§E says to revoke and restore. It does not say to republish** — and the
-validation-log entries for earlier rounds assert "revoked … and the CRL
+**Nothing written down says to republish.** The revocation loop lives in the
+gitignored lab harness, not in the committed runbook — `docs/live-reproof-runbook.md`
+§E covers only the restore (CA rights, tasks, store, dotenv, pool) — and neither
+of them republishes the CRL. The validation-log entries for earlier rounds assert "revoked … and the CRL
 republished", a claim at least one round did not actually satisfy. That is the
 familiar shape: the step was believed done because the sentence describing it
 was written, and nothing checked.
@@ -1619,14 +1621,17 @@ unmeasurable: not un-measured, **un-measurABLE**.
    loop.
 2. **Make it evidence-bearing rather than asserted.** Re-fetch the CDP and
    assert both that the CRL Number advanced *and* that every serial the
-   teardown just revoked is listed — with a negative control, because a CRL
-   lookup that matches nothing returns the same "not found" as a correct
-   negative. A teardown step whose failure mode is silence needs the same
+   teardown just revoked is listed — with controls on both sides, because
+   absence proves nothing on its own: the just-revoked serials are the
+   positive control (a lookup that matches nothing reads them as absent and
+   fails), and a serial that must NOT be listed is the negative control (a
+   lookup that matches everything fails). A teardown step whose failure mode is silence needs the same
    treatment §E already gives the preserve step: verify, do not assert.
 3. Note the interaction with `scripts/sample_crl_age.py`. A forced
    republication truncates the current publication cycle. That **cannot**
-   corrupt the served-age floor — a truncated cycle only ever serves ages below
-   the running maximum, so it can move neither bound — but it does spend that
+   corrupt the served-age floor — every age a truncated cycle serves is a
+   genuine served age, so it can never push the observed maximum above the
+   true one; it can only fail to reach it — but it does spend that
    cycle as a clean natural observation. Worth saying out loud in the runbook so
    a future session does not skip the republish to protect the sampler; the
    trade is real but one-sided.

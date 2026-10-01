@@ -367,8 +367,9 @@ engineered to. Until then it has not — regardless of a green local test run.
 
   **NEW FINDING, filed as UNFILED item 26.** One certificate was revoked and the
   CRL gained 31 entries. The other 30 were the *previous* session's teardown
-  revocations, sitting unpublished for ~5.5 hours because §E says to revoke and
-  restore but never says to republish. Earlier validation-log entries assert
+  revocations, sitting unpublished for ~5.5 hours because the teardown (the
+  gitignored harness's revocation loop, then the committed runbook's §E
+  restore) never republishes. Earlier validation-log entries assert
   "revoked … and the CRL republished" — a claim at least one round did not
   satisfy. On a 1-week `CRLPeriod` the exposure approaches a week.
 
