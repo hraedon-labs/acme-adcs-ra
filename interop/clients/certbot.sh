@@ -15,7 +15,7 @@ skip key-change "acme-python has no keyChange"
 step revoke $CB revoke --cert-path /w/cfg/live/t1/cert.pem --reason keycompromise --no-delete-after-revoke
 # A second revocation is answered 200 by design (H-4 in routes/revocation.py):
 # RFC 8555 §7.6 says 400 alreadyRevoked, and the RA deliberately deviates so a
-# retried revocation never reads as a failure (open decision WI-037). Asserted
+# retried revocation never reads as a failure (open decision WI-047). Asserted
 # here so a change in either direction is noticed.
 step revoke-again-idempotent $CB revoke --cert-path /w/cfg/live/t1/cert.pem --no-delete-after-revoke
 step deactivate-account $CB unregister

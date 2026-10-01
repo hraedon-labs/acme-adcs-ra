@@ -1,6 +1,6 @@
 name: Stock-client interop
 
-# WI-035: certbot, lego, acme.sh and Posh-ACME against a local RA with an
+# WI-045: certbot, lego, acme.sh and Posh-ACME against a local RA with an
 # in-memory fake CA (interop/run.sh). Needs Docker and network access to pull
 # the pinned client images and Posh-ACME from PSGallery; needs no secrets.
 on:

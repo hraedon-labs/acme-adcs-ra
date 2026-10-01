@@ -104,7 +104,7 @@ with an independent implementation.
 4. Preserve redacted client logs and the associated RA/CA evidence before
    teardown. Record any skipped client operation as unproven, with its reason.
 
-### A.2b Stock-client full-inventory pass (WI-035, added 2026-10-01)
+### A.2b Stock-client full-inventory pass (WI-045, added 2026-10-01)
 
 **Run it locally first, every time** — it needs no lab, no CA and no secrets:
 
@@ -151,9 +151,9 @@ transcript as in §A.2.
 passes is a **server finding by default**, not a client bug, and earns a
 regression test written against the client's transcript. The first local run
 (2026-10-01, against `ed1bab5`) found four that way: keyChange's inner nonce
-(WI-031), missing Replay-Nonce (WI-032 — certbot could not even register),
-the challenge `up` link (WI-036), and a false RFC citation behind revokeCert's
-idempotent 200 (WI-037).
+(WI-041), missing Replay-Nonce (WI-042 — certbot could not even register),
+the challenge `up` link (WI-046), and a false RFC citation behind revokeCert's
+idempotent 200 (WI-047).
 
 ### A.3 The phase-L blackhole, and proving the instrument first
 
