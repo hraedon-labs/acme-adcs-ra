@@ -104,6 +104,48 @@ with an independent implementation.
 4. Preserve redacted client logs and the associated RA/CA evidence before
    teardown. Record any skipped client operation as unproven, with its reason.
 
+### A.2b Stock-client full-inventory pass (WI-035, added 2026-10-01)
+
+**Run it locally first, every time** — it needs no lab, no CA and no secrets:
+
+```bash
+interop/run.sh                       # certbot, lego, acme.sh, Posh-ACME
+RA_SRC=<other checkout> interop/run.sh lego posh-acme   # a different tree
+INJECT_BAD_NONCE_EVERY=0 interop/run.sh                 # no fault injection
+```
+
+It builds the RA from the tree under test (hash-pinned production closure),
+fronts it with a TLS proxy, and replaces only the enrollment leg with an
+in-memory signer (`interop/ra_harness_entry.py`, outside `src/` and never in the
+wheel). Each client drives what it supports: directory, new-nonce,
+new-account (EAB), account update, new-order, authz POST-as-GET, challenge,
+finalize, order polling, certificate download, **keyChange**, revokeCert, and
+deactivation. The proxy burns the nonce of every Nth JWS POST before forwarding
+it, so **every run exercises each client's badNonce-retry path**. Output: one
+`RESULT <client> <step> PASS|FAIL|SKIP` line per step, transcripts under
+`$INTEROP_WORK/out` (proxy log = every request the client actually sent). CI
+runs it on every PR (`.github/workflows/interop.yml`).
+
+Coverage gaps, stated rather than implied: certbot has no keyChange; the lego
+CLI has no account deactivation; after deactivation certbot and Posh-ACME
+refuse locally instead of sending a request, so only acme.sh proves the
+server-side refusal. acme.sh must be told `--extended-key-usage serverAuth`
+(its default CSR also asks for clientAuth, which the RA refuses by design).
+
+**Then on the lab RA**, for the candidate artifact: point one maintained
+third-party client — acme.sh or Posh-ACME, in addition to the Certify the Web
+runs in §A.2 — at the lab and repeat the same inventory, including **one key
+rollover and one issuance with the rolled key**. Record client version and
+transcript as in §A.2.
+
+**Rule:** a step where a stock client fails and the in-repo hand-rolled client
+passes is a **server finding by default**, not a client bug, and earns a
+regression test written against the client's transcript. The first local run
+(2026-10-01, against `ed1bab5`) found four that way: keyChange's inner nonce
+(WI-031), missing Replay-Nonce (WI-032 — certbot could not even register),
+the challenge `up` link (WI-036), and a false RFC citation behind revokeCert's
+idempotent 200 (WI-037).
+
 ### A.3 The phase-L blackhole, and proving the instrument first
 
 The queue/drain phases need the CA's inbound TCP/443 blocked from the RA so
