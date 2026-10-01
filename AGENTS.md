@@ -72,6 +72,32 @@ ESC surface adcs-lens would flag — scope it tightly.
 
 ## Status
 
+**2026-09-21: two security findings fixed and live-validated; a third
+retracted.** WI-025 — a non-ASCII `Authorization` header raised `TypeError`
+out of `hmac.compare_digest` and 500'd **every** admin endpoint for an
+unauthenticated peer, the same bug class `_dummy_hmac` was fixed for on the EAB
+path and never swept here. WI-026 — `$Serial` reached `certutil` unvalidated,
+and `certutil -revoke` takes a *comma-separated list*, so the RA's JSON could
+have steered a CA-officer call; unreachable today, fixed because of the
+boundary it crosses, not a live exploit. Validated on the lab estate: 33/33
+raw-socket credential checks, 2736 real serial spellings accepted with zero
+false refusals under Windows PowerShell 5.1, 12/12 injection shapes refused,
+and `certutil` provably never reached on a bad serial.
+
+**WI-027 was retracted — it was my own harness.** An apparent one-packet
+unauthenticated DoS was a probe running the server with an unread
+`subprocess.PIPE`; tracebacks filled the buffer and the server blocked writing
+to stderr. Two things survive it. **Starlette re-raises past
+`@app.exception_handler(Exception)`** ("We always continue to raise the
+exception" — its own source), so such a handler contains nothing; and the unit
+test that certified it used `TestClient(raise_server_exceptions=False)`, which
+swallows exactly the re-raise in question — a test that could not fail. Use
+`raise_server_exceptions=True` when the question is whether something escapes.
+Full write-up in `docs/security-review-2026-09-21.md`.
+
+**Regista work-item writes are working again** — the block recorded below on
+2026-09-20 has lifted. New items go to the store, not `UNFILED-WORK-ITEMS.md`.
+
 **2026-09-05 (later): WI-052 settled by measurement, and the watermark proven
 live.** The sampler's 399 samples over one complete publication cycle put the
 maximum served age at 603654s against a 649200s window, so a binding,
