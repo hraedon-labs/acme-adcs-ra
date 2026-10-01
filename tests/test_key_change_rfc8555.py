@@ -192,3 +192,33 @@ def test_rollover_consumes_exactly_one_nonce(tmp_path: Path) -> None:
     rolled.account_url = acme.account_url
     rolled._nonce = spare
     assert rolled.new_order(["srv01.WORK-DOMAIN.local"]).status_code == 201
+
+
+def test_captured_inner_jws_is_valid_again_after_a_b_a(tmp_path: Path) -> None:
+    """PINS a trade the RFC makes (Daybreak Blue, round 1), not a defence.
+
+    Without an inner nonce, an A->B inner JWS becomes acceptable again once the
+    account is back on key A. Only the current-key holder can re-wrap it, and
+    that holder could mint a fresh rollover anyway, so it is not a bypass; this
+    test exists so the behaviour stays visible if anyone changes it."""
+    client, store, acme = _setup(tmp_path)
+    key_a = acme.account_key
+    key_b = ec.generate_private_key(ec.SECP256R1())
+    captured = _inner_jws(acme, key_b)
+    assert _post(client, _outer_jws(client, acme, captured)).status_code == 200
+
+    # B -> A, driven by the holder of B.
+    on_b = HandRolledAcmeClient(client, BASE, key_b)
+    on_b.account_url = acme.account_url
+    back = _inner_jws(on_b, key_a)
+    outer_b = sign_jws(
+        back,
+        key_b,
+        {"alg": "ES256", "kid": acme.account_url, "nonce": _fresh_nonce(client), "url": KEY_CHANGE_URL},
+    )
+    assert _post(client, outer_b).status_code == 200
+
+    # The captured A->B inner JWS, re-wrapped by the (again current) key A.
+    resp = _post(client, _outer_jws(client, acme, captured))
+    assert resp.status_code == 200, resp.text
+    assert _stored_thumbprint(store, acme) == jwk_thumbprint(jwk_from_private_key(key_b))

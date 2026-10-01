@@ -83,10 +83,13 @@ def _fresh(client: TestClient) -> str:
 
 
 def test_every_successful_post_carries_a_redeemable_nonce(tmp_path: Path) -> None:
-    client, _store, _ctx, _bucket, acme = _setup(tmp_path)
+    client, _store, _ctx, bucket, acme = _setup(tmp_path)
 
-    resp = _post(client, "/acme/new-order", _new_order_body(acme, _fresh(client)))
+    first = _fresh(client)
+    before = bucket.draws
+    resp = _post(client, "/acme/new-order", _new_order_body(acme, first))
     assert resp.status_code == 201, resp.text
+    assert bucket.draws == before  # a success never draws, open bucket or not
     chained = resp.headers["Replay-Nonce"]
 
     # The nonce handed back is live: the next request can spend it directly,
@@ -219,3 +222,31 @@ def test_a_failed_mint_does_not_turn_a_completed_post_into_a_500(
     resp = _post(client, "/acme/new-order", _new_order_body(acme, nonce))
     assert resp.status_code == 201, resp.text
     assert "Replay-Nonce" not in resp.headers
+
+
+def test_the_mint_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The response-time mint is a SQLite write that can wait out the busy
+    timeout; on the event loop it would stall every request (Daybreak Blue,
+    round 1). asyncio.get_running_loop() raises outside the loop's thread."""
+    import asyncio
+
+    client, store, _ctx, _bucket, acme = _setup(tmp_path)
+    original = store.create_nonce
+    on_loop: list[bool] = []
+
+    def recording() -> str:
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return original()
+
+    nonce = _fresh(client)
+    monkeypatch.setattr(store, "create_nonce", recording)
+    resp = _post(client, "/acme/new-order", _new_order_body(acme, nonce))
+    assert resp.status_code == 201
+    assert resp.headers.get("Replay-Nonce")
+    assert on_loop == [False]

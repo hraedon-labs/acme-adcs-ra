@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from acme_adcs_ra.acme_errors import BAD_NONCE_TYPE, AcmeError
@@ -65,8 +66,8 @@ class ReplayNonceMiddleware:
     successful POST response has, by construction, verified a JWS — the caller
     is an authenticated account, or a new account that passed EAB — so it gets
     its nonce unbucketed: one spent, one minted, and the RFC's MUST holds even
-    when the bucket is dry. Every ERROR response draws from the bucket exactly
-    as ``new-nonce`` does, because an error may come from an unauthenticated
+    when the bucket is dry. Every handled ERROR response draws from the bucket
+    exactly as ``new-nonce`` does, because an error may come from an unauthenticated
     peer: without that, "send a garbage signature with a valid nonce, receive a
     fresh nonce in the 401" would be an unbounded nonce chain around the
     bucket. A dry bucket on an error simply omits the header (the client falls
@@ -75,6 +76,10 @@ class ReplayNonceMiddleware:
     A mint that fails (unwritable store) is logged and the header omitted: the
     request's own effects have already committed, and turning a completed
     operation into a 500 after the fact would be worse than a missing nonce.
+    The mint is a SQLite write, so it runs in the threadpool rather than on the
+    event loop: under writer contention it can wait out the 5 s busy timeout,
+    and it must not stall every other request while it does (Daybreak Blue,
+    round 1).
     """
 
     def __init__(self, app: ASGIApp, context: ServerContext) -> None:
@@ -88,8 +93,10 @@ class ReplayNonceMiddleware:
         state: dict[str, Any] = scope.setdefault("state", {})
 
         async def send_with_nonce(message: Message) -> None:
-            if message["type"] == "http.response.start":
-                nonce = self._nonce_for(message, state)
+            if message["type"] == "http.response.start" and self._owed_nonce(
+                message, state
+            ):
+                nonce = await self._mint()
                 if nonce is not None:
                     headers = list(message.get("headers", []))
                     headers.append((b"replay-nonce", nonce.encode("ascii")))
@@ -98,22 +105,21 @@ class ReplayNonceMiddleware:
 
         await self.app(scope, receive, send_with_nonce)
 
-    def _nonce_for(self, message: Message, state: dict[str, Any]) -> str | None:
+    def _owed_nonce(self, message: Message, state: dict[str, Any]) -> bool:
         if any(k.lower() == b"replay-nonce" for k, _v in message.get("headers", [])):
-            return None
+            return False
         consumed = bool(state.get("acme_nonce_consumed"))
         status = int(message["status"])
         if status < 400:
-            if not consumed:
-                return None
-        elif not (consumed or state.get("acme_error_type") == BAD_NONCE_TYPE):
-            return None
-        else:
-            bucket = self.context.nonce_bucket
-            if bucket is not None and not bucket.take():
-                return None
+            return consumed
+        if not (consumed or state.get("acme_error_type") == BAD_NONCE_TYPE):
+            return False
+        bucket = self.context.nonce_bucket
+        return bucket is None or bucket.take()
+
+    async def _mint(self) -> str | None:
         try:
-            return self.context.store.create_nonce()
+            return await run_in_threadpool(self.context.store.create_nonce)
         except (sqlite3.Error, OSError):
             logger.exception("could not mint a Replay-Nonce for an ACME response")
             return None

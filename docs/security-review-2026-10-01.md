@@ -33,11 +33,20 @@ also omits the inner nonce, per its source; not run here.
 - `HandRolledAcmeClient.key_change()` and two hand-built tests stop sending an
   inner nonce.
 
-**Replay analysis.** Dropping the inner nonce removes no protection: the inner
-JWS is only ever accepted inside one outer request whose nonce is single-use;
-it binds `url` (equal to the outer `url`) and `account` (equal to the outer
-`kid`); and once the rollover succeeds the old key no longer authenticates, so
-a captured inner JWS cannot be re-wrapped. Each property has a test.
+**Replay analysis.** The whole request is single-use (the outer nonce); the
+inner JWS binds `url` (equal to the outer `url`) and `account` (equal to the
+outer `kid`); and while the old key is not the account's current key, a
+captured inner JWS cannot be re-wrapped, because the outer must be signed by
+the current key. Each property has a test.
+
+**What dropping the inner nonce does give up** (Daybreak Blue, round 1): after
+a deliberate A→B→A sequence, the captured A→B inner JWS is valid again — a
+holder of the *current* key A can re-wrap it and roll the account back to B.
+The old inner nonce prevented that. It is not an authorization bypass: only
+the current-key holder can do it, and that holder can mint a fresh rollover to
+any key anyway; the target key B was the account's own key. It is the
+behaviour RFC 8555 prescribes, and a test now pins it so the trade stays
+visible.
 
 ## WI-032 — Replay-Nonce only on new-nonce (raised low → medium)
 
@@ -66,9 +75,9 @@ writer.
 | Response | Nonce | Source |
 |---|---|---|
 | 2xx/3xx to a POST that spent a nonce | always | **unbucketed** — a success implies a verified JWS (an account, or a new account past EAB); one spent, one minted, and the MUST holds even under nonce-flood pressure |
-| error to a POST that spent a nonce | if the bucket allows | bucket — the error may be an unauthenticated peer's |
+| handled ACME error (`AcmeError`) to a POST that spent a nonce | if the bucket allows | bucket — the error may be an unauthenticated peer's |
 | `badNonce` error (nothing spent) | if the bucket allows | bucket |
-| any other error | none | — |
+| any other error, incl. an unhandled exception's 500 (produced outside this middleware) | none | — |
 
 Without the error rule, "valid nonce + garbage signature → 401 carrying a fresh
 nonce" would be an unbounded unauthenticated nonce chain around the bucket. A
@@ -94,23 +103,28 @@ type and status are unchanged.
 
 ## Tests and mutation matrix
 
-New: `tests/test_key_change_rfc8555.py` (6), `tests/test_replay_nonce_rfc8555.py`
-(11). Each mutation below was applied alone against the fixed tree.
+New: `tests/test_key_change_rfc8555.py` (7), `tests/test_replay_nonce_rfc8555.py`
+(12). Each mutation below was applied alone against the fixed tree and both
+files re-run (re-measured after round 1; counts are of the 19 tests).
 
 | Mutation | Result |
 |---|---|
-| keyChange route reverted to `ed1bab5` | 6/6 keyChange tests fail |
-| present-nonce and inner-kid refusals disabled | 2 fail (nonce-present, kid-present) |
-| `ReplayNonceMiddleware` not registered | 7/11 fail |
-| error responses mint unbucketed | 3 fail (both dry-bucket error tests, chain test) |
-| success responses drawn from the bucket | 1 fails (dry-bucket success) |
+| keyChange route replaced by the `ed1bab5` file verbatim | 7 fail (every keyChange test) |
+| present-nonce and inner-kid refusals both disabled | 2 fail |
+| inner-kid refusal alone disabled | 1 fails (the kid test sends `jwk` **and** `kid`) |
+| success body back to `{}` | 1 fails |
+| `ReplayNonceMiddleware` not registered | 8 fail |
+| handled errors mint unbucketed | 3 fail |
+| successes drawn from the bucket | 2 fail |
 | badNonce detail prefix removed | 1 fails |
-| mint guard removed (`create_nonce` raises) | 1 fails (completed POST becomes a 500) |
-| `acme_error_type` never set | 1 fails (badNonce retry nonce) |
+| mint guard removed (`create_nonce` raises) | 1 fails (a completed POST becomes a 500) |
+| `acme_error_type` never set | 1 fails |
 | errors that spent a nonce get none | 2 fail |
+| mint run on the event loop instead of the threadpool | 1 fails |
 
-The success-body change (account object) is covered by
-`test_rfc_shaped_inner_jws_without_nonce_rolls_the_key`.
+Round 1 (DeepSeek v4.1) reported 5/6 for the first row; that came from a
+hand-written approximation of the old route, not the `ed1bab5` file, and does
+not reproduce against the real one.
 
 ## Not covered here
 
