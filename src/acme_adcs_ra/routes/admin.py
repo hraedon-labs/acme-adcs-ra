@@ -144,11 +144,52 @@ def _crl_evidence_for(
         )
 
 
-def _bearer_token(request: Request) -> str:
+def _bearer_token(request: Request) -> bytes:
+    """Return the Bearer credential as the **bytes the client sent**.
+
+    Bytes, not ``str``, because every caller feeds this to
+    ``hmac.compare_digest``, which raises ``TypeError`` — not ``False`` — when
+    a ``str`` argument carries a non-ASCII character. Starlette decodes inbound
+    header bytes as latin-1, so a single byte >= 0x80 anywhere in the
+    credential turned all three admin guards into an unhandled 500, at an
+    unauthenticated peer's choosing. Failing closed, but not as a 401: no
+    audit-legible denial, a traceback per request, and a rejection that costs
+    more than an accepted call.
+
+    Same class as the one ``app_state._dummy_hmac`` was fixed for on the EAB
+    path; that sweep never reached this surface.
+
+    ``latin-1`` is the exact inverse of Starlette's own header decode, so this
+    recovers the bytes that were on the wire rather than a re-interpretation of
+    them — which is what a credential comparison should be against. It is total
+    over anything Starlette can produce (every codepoint is U+0000..U+00FF);
+    the fallback covers a hand-built ``Request`` in a test.
+    """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
         raise unauthorized("missing Bearer token")
-    return auth_header.split(" ", 1)[1]
+    token = auth_header.split(" ", 1)[1]
+    try:
+        return token.encode("latin-1")
+    except UnicodeEncodeError:  # pragma: no cover - unreachable via Starlette
+        return token.encode("utf-8")
+
+
+def _configured_token_bytes(configured: str) -> bytes:
+    """The configured credential as bytes, for comparison against the wire.
+
+    UTF-8, because that is how the value reached the process: pydantic-settings
+    reads ``.env`` as UTF-8 and the environment decodes as UTF-8. Pairing it
+    with the latin-1 wire decode above is not a mismatch but the correct round
+    trip — a client presenting the operator's credential puts its UTF-8 bytes
+    on the wire, and those are the bytes both sides end up holding.
+
+    Encoding is lossless on both sides deliberately. ``errors="replace"`` would
+    have removed the crash too, and folded every unencodable character onto
+    ``?`` — turning distinct credentials into equal ones. See
+    ``test_non_ascii_credential_does_not_become_a_false_accept``.
+    """
+    return configured.encode("utf-8")
 
 
 def _require_admin_token(request: Request, ctx: ServerContext) -> None:
@@ -156,7 +197,9 @@ def _require_admin_token(request: Request, ctx: ServerContext) -> None:
     admin_token = ctx.config.admin_token.get_secret_value()
     if not admin_token:
         raise unauthorized("admin endpoint not configured")
-    if not hmac.compare_digest(_bearer_token(request), admin_token):
+    if not hmac.compare_digest(
+        _bearer_token(request), _configured_token_bytes(admin_token)
+    ):
         raise unauthorized("invalid admin token")
 
 
@@ -178,7 +221,9 @@ def _require_revocation_authority(request: Request, ctx: ServerContext) -> None:
     confirm_token = ctx.config.revocation_confirm_token.get_secret_value()
     admin_token = ctx.config.admin_token.get_secret_value()
     for candidate in (confirm_token, admin_token):
-        if candidate and hmac.compare_digest(provided, candidate):
+        if candidate and hmac.compare_digest(
+            provided, _configured_token_bytes(candidate)
+        ):
             return
     raise unauthorized("invalid admin or revocation confirmation token")
 
@@ -203,7 +248,9 @@ def _require_revocation_confirm_token(request: Request, ctx: ServerContext) -> N
             "ACME_RA_REVOCATION_CONFIRM_TOKEN (the general admin token is "
             "deliberately not accepted for this endpoint)"
         )
-    if not hmac.compare_digest(_bearer_token(request), confirm_token):
+    if not hmac.compare_digest(
+        _bearer_token(request), _configured_token_bytes(confirm_token)
+    ):
         raise unauthorized("invalid revocation confirmation token")
 
 
