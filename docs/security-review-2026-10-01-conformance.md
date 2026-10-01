@@ -45,10 +45,13 @@ signed request, resent with the right type, succeeds). Media-type parameters
 (`; charset=utf-8`) do not affect the match and the type compares
 case-insensitively (RFC 9110 §8.3.1); the field must appear **exactly once** —
 duplicates are refused in either order (Daybreak Blue, round 1, found the
-first-of-two was trusted) — and **any comma** is refused, because a comma means
-a list however it arrived (folded duplicates, unfolded obs-fold): round 2 found
-`application/jose+json; charset=utf-8, text/plain` slipped past the first fix
-by splitting at `;` before looking for a list. A
+first-of-two was trusted) — and the value must parse as **one RFC 9110 §8.3.1 media type** (type/subtype
+plus well-formed `;` parameters, token or quoted-string values). Round 2 found
+`application/jose+json; charset=utf-8, text/plain` slipping past a split at
+`;`; round 3 found the "refuse any comma" fix both accepted the malformed
+`application/jose+json; text/plain` and refused the valid
+`application/jose+json; profile="one,two"`. A grammar parse settles all three:
+a list (folded duplicates, unfolded obs-fold) is not a media type. A
 **missing** Content-Type is also 415: §6.2's wording is "if a request does not
 meet this requirement", and a request without the field does not. The problem type is
 `malformed` — RFC 8555 registers none for 415. Because the check precedes the body read, an oversized body with a wrong type is now 415 rather than 413. Admin JSON endpoints do not use
@@ -109,7 +112,7 @@ is the precedent). Whether to conform is an owner decision, filed as WI-047.
 
 ## Mutation matrix
 
-New: `tests/test_rfc8555_conformance_2026_10_01.py` (31; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases and an exact-match grandfathering test in round 2, +1 CAS-lost expiry test in round 3). One mutation at a
+New: `tests/test_rfc8555_conformance_2026_10_01.py` (33; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases and an exact-match grandfathering test in round 2, +1 CAS-lost expiry test and +2 media-type grammar cases in round 3). One mutation at a
 time, against the fixed tree:
 
 | Mutation | Result |
@@ -123,7 +126,7 @@ time, against the fixed tree:
 | media-type check removed | 10 fail (was 4 on the original 23) |
 | media type compared raw (no param/case handling) | 2 fail |
 | (round 1) duplicate-field refusal removed | 2 fail |
-| (round 2) comma refusal removed | 1 fails (`jose+json; charset=utf-8, text/plain`) |
+| (round 3) grammar parse replaced by the round-2 split-at-`;` + comma refusal | 2 fail (malformed parameter, quoted comma) |
 | kid floor not called | 4 fail |
 | grandfathering disabled | 1 fails |
 | (round 2) grandfathering made case-insensitive (store query + floor) | 1 fails |

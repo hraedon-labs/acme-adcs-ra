@@ -6,6 +6,7 @@ This module only **verifies** signatures; it never signs anything.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -119,6 +120,18 @@ def _consume_nonce(store: Store, header: dict[str, Any], request_url: str) -> No
 
 JOSE_JSON = "application/jose+json"
 
+# RFC 9110 §5.6.2 token, §5.6.4 quoted-string, §5.6.6 parameters, §8.3.1
+# media-type. OWS is SP / HTAB. Group 1 is "type/subtype".
+_TCHAR = r"[!#$%&'*+.^_`|~0-9A-Za-z-]"
+_TOKEN = rf"{_TCHAR}+"
+_QUOTED = r'"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*"'
+# A pattern string, not re.compile(): the no-signing architecture guard bans
+# any call named compile() in src/ (dynamic code loading); re caches it anyway.
+_MEDIA_TYPE = (
+    rf"[ \t]*({_TOKEN}/{_TOKEN})"
+    rf"(?:[ \t]*;[ \t]*(?:{_TOKEN}=(?:{_TOKEN}|{_QUOTED}))?)*[ \t]*"
+)
+
 
 def _require_jose_json(request: Request) -> None:
     """RFC 8555 §6.2: a JWS POST MUST be ``application/jose+json``, else 415.
@@ -140,19 +153,16 @@ def _require_jose_json(request: Request) -> None:
             f"ACME requests must carry exactly one Content-Type field; got {len(fields)}"
         )
     raw = fields[0] if fields else ""
-    # A comma means a list of values, however it arrived: two fields folded by
-    # a proxy, obsolete line folding unfolded by h11, or a client sending one.
-    # Splitting at ';' first let "application/jose+json; charset=utf-8,
-    # text/plain" through (Daybreak Blue, round 2). No single media type this
-    # RA accepts contains a comma, so any comma is refused outright.
-    if "," in raw:
+    # Parse the value as ONE RFC 9110 §8.3.1 media type — type "/" subtype
+    # followed by well-formed ";" parameters — instead of splitting text.
+    # Round 2 split at ';' and refused any comma, which still accepted
+    # "application/jose+json; text/plain" (a malformed parameter, ignored)
+    # and wrongly refused a comma inside a quoted parameter value (Daybreak
+    # Blue, round 3). A list (folded duplicates, obs-fold) fails the grammar.
+    match = re.fullmatch(_MEDIA_TYPE, raw)
+    if match is None or match.group(1).lower() != JOSE_JSON:
         raise unsupported_media_type(
-            "ACME requests must carry exactly one Content-Type value; got a list"
-        )
-    media_type = raw.split(";", 1)[0].strip().lower()
-    if media_type != JOSE_JSON:
-        raise unsupported_media_type(
-            f"ACME requests must use Content-Type {JOSE_JSON} "
+            f"ACME requests must use exactly one Content-Type of {JOSE_JSON} "
             f"(RFC 8555 §6.2); got {raw or 'none'!r}"
         )
 

@@ -228,7 +228,14 @@ def test_wrong_media_type_is_415_and_spends_no_nonce(
 
 
 @pytest.mark.parametrize(
-    "content_type", ["application/jose+json; charset=utf-8", "Application/JOSE+JSON"]
+    "content_type",
+    [
+        "application/jose+json; charset=utf-8",
+        "Application/JOSE+JSON",
+        # A comma inside a quoted parameter value is one value, not a list
+        # (RFC 9110 §5.6.4; Daybreak Blue round 3).
+        'application/jose+json; profile="one,two"',
+    ],
 )
 def test_media_type_parameters_and_case_are_accepted(
     tmp_path: Path, content_type: str
@@ -262,6 +269,8 @@ class _HeaderOverride:
         [("content-type", "application/jose+json; charset=utf-8, text/plain")],
         [("content-type", "application/jose+json, text/plain")],
         [("content-type", "text/plain, application/jose+json")],
+        # Malformed parameter: used to be ignored after the first ';' (round 3).
+        [("content-type", "application/jose+json; text/plain")],
     ],
 )
 def test_duplicate_content_type_fields_are_refused_in_either_order(
