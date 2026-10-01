@@ -340,7 +340,8 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   `(serial, account_id)`); cross-account → 404 (no leak). Already-revoked →
   **200**, a deliberate deviation: RFC 8555 §7.6 specifies 400
   `alreadyRevoked`; the RA keeps 200 so a retried revocation that did succeed
-  never reads as a failure (open decision WI-047). Revoked certs are **not served** (GET → 410
+  never reads as a failure (owner decision 2026-10-01, WI-047; precedent:
+  the 2026-08-24 Certify the Web false-failed revocation). Revoked certs are **not served** (GET → 410
   Gone); the order is flipped to `revoked`. **Reason 7 is rejected** (RFC 5280
   reason 7 is "unused" and `certutil` rejects it) — the valid set is
   `{0,1,2,3,4,5,6,8,9,10}`, consistent with `scripts/Revoke-Cert.ps1`, so an

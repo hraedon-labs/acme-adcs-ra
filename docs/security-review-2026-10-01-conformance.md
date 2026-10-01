@@ -118,7 +118,18 @@ already-revoked cert returns 200 OK"*. It does not: §7.6 says the server
 'urn:ietf:params:acme:error:alreadyRevoked'"*. The comment is corrected here;
 the behaviour is **not** changed, because a client retrying a revocation that
 did succeed must not be told it failed (the 2026-08-24 Certify the Web finding
-is the precedent). Whether to conform is an owner decision, filed as WI-047.
+is the precedent).
+
+**Decision (owner, 2026-10-01): keep the 200 as a deliberate, documented RFC
+deviation.** RFC 8555 §7.6 specifies 400 `alreadyRevoked`; the RA answers an
+already-revoked certificate (and the concurrent-CAS loser) with 200 so that a
+client retrying a revocation that did succeed is never told it failed. Recorded
+as WI-047 (closed as decided), in the H-4 comment in `routes/revocation.py`, and
+in `docs/threat-model.md`. Revisit only if a stock client mishandles the 200.
+
+Follow-ups filed the same day: WI-048 (alg/key-type mismatch should be
+`badPublicKey`, not 401), WI-049 (`Link rel="index"` never sent), WI-054 (lab
+stock-client pass incl. one key rollover).
 
 ## Mutation matrix
 
