@@ -84,6 +84,17 @@ short-circuit) now carry `Link: <authz-url>;rel="up"`. Still open: the `index`
 relation §7.1 describes on every non-directory resource is not sent; no client
 in the harness needs it.
 
+## Found on the way: a false RFC citation in revokeCert (WI-037, not changed)
+
+The harness's certbot run revoked the same certificate twice and got 200 both
+times. `routes/revocation.py` (H-4) justified that with *"RFC 8555 §7.6 says an
+already-revoked cert returns 200 OK"*. It does not: §7.6 says the server
+*"returns an error response with status code 400 (Bad Request) and type
+'urn:ietf:params:acme:error:alreadyRevoked'"*. The comment is corrected here;
+the behaviour is **not** changed, because a client retrying a revocation that
+did succeed must not be told it failed (the 2026-08-24 Certify the Web finding
+is the precedent). Whether to conform is an owner decision, filed as WI-037.
+
 ## Mutation matrix
 
 New: `tests/test_rfc8555_conformance_2026_10_01.py` (23). One mutation at a

@@ -162,9 +162,15 @@ async def revoke_cert(
     cert_sans = _dns_sans(stored_cert)
 
     if cert_record.status == CertStatus.REVOKED:
-        # H-4: RFC 8555 §7.6 says an already-revoked cert returns 200 OK
-        # (idempotent) rather than 400 alreadyRevoked. Empty body, like every
-        # other success path here -- a JSON object body breaks real clients.
+        # H-4: an already-revoked cert returns 200 OK (idempotent). This is a
+        # DELIBERATE DEVIATION, not RFC behaviour: RFC 8555 §7.6 says the server
+        # "returns an error response with status code 400 (Bad Request) and
+        # type ...:alreadyRevoked". The comment here used to claim the RFC
+        # required the 200 (corrected 2026-10-01; open decision WI-037). The
+        # 200 is kept because a client retrying a revocation that DID succeed
+        # must not be told it failed -- Certify the Web already turned one
+        # parse failure into a reported-failed revocation (2026-08-24, below).
+        # Empty body, like every other success path here.
         return Response(status_code=200)
 
     try:
@@ -235,7 +241,8 @@ async def revoke_cert(
 
     # M-3: the store signals deterministically whether this caller won the CAS.
     # If a concurrent revocation won (won_cas=False), treat it as idempotent
-    # success (RFC 8555 §7.6) and DO NOT emit a duplicate audit event — the
+    # success (the H-4 deviation above; §7.6 itself says alreadyRevoked) and
+    # DO NOT emit a duplicate audit event — the
     # winning revocation already recorded one with its own reason/timestamp.
     # Return 200 with an empty body (the out_of_band_revocation hint is NOT
     # re-emitted on the idempotent second call; the first call's audit already
