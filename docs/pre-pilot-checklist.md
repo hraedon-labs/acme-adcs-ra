@@ -295,6 +295,43 @@ engineered to. Until then it has not — regardless of a green local test run.
 
 ## Validation log
 
+- **2026-09-21 — security fixes WI-025/WI-026 validated on the lab estate
+  (branch `fix/admin-bearer-and-officer-input-validation`, base `5cdd83f`).**
+  **Not a re-proof**: no ACME round-trip, no IIS deploy, issuance and the
+  revocation queue were not exercised. The RA host was found torn down from the
+  2026-09-05 run (pool stopped, no venv, no `scripts/`), so everything ran from
+  throwaway venvs and a throwaway DB under `C:\Temp`. IIS, the app pool, the
+  live `acme_ra.db`/`acme-ra.env` and the co-hosted sites were untouched.
+
+  - Pinned closure `--require-hashes --only-binary :all:` into a fresh venv on
+    Windows/CPython 3.14 — 29 packages, clean.
+  - **WI-025 on a raw socket** (the unit suite cannot reach this: `httpx`
+    re-encodes a bytes header value as UTF-8 before the app sees it) — 5
+    credential shapes × 6 admin endpoints + 3 controls = **33/33**, every
+    rejection a 401. The same harness against unmodified `origin/main`
+    reproduces the 500, so it can detect the defect.
+  - **WI-026 against the real serial population under Windows PowerShell 5.1**
+    — 443 serials from the CA database (dispositions 20+21) and 13 from the RA
+    store, six spellings each: **2736 accepted, 0 false refusals**. 12/12
+    injection shapes refused. On the CA host, `Revoke-Cert.ps1` exits 3 with
+    **`certutil` never reached** for comma-list / restrict-clause /
+    extra-argument payloads, while a real serial and the `0x`+uppercase
+    copy-paste form both pass validation and reach the CA.
+  - Full Pester under **WinPS 5.1 / Pester 5.7.1**: 495 passed, 1 failed, 1
+    skipped. The failure is **pre-existing and environmental** — `python3.exe`
+    is not executable on that host — confirmed by running unmodified
+    `origin/main` on the same box for the identical single failure (484/1).
+    That test has no coverage on this host; **unfiled**.
+  - **One unintended CA-side change:** a control re-revoked serial `…38` with
+    reason 4. It was chosen as `Disposition=21` on the assumption that made the
+    control inert; it was reason 8 (removeFromCRL), the *un-revoke* state, so
+    the script correctly re-revoked it. Lab-only, safe direction, not reverted
+    (restoring means `certutil -revoke <serial> 8`, never-automatic here). Five
+    reason-8 fixtures remain, at least two gMSA-issued.
+  - **WI-027 retracted** — the apparent one-packet unauthenticated DoS was a
+    probe harness running the server with an unread `subprocess.PIPE`. See
+    `docs/security-review-2026-09-21.md`.
+
 - **2026-09-05 — review of `610a5a3` and full live re-proof, run by Opus 5
   against a change authored by another agent.** Same split as 2026-08-27: the
   reviewer did not write the change.
