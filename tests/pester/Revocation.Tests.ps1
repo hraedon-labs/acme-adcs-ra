@@ -136,10 +136,10 @@ Describe "Test-CaSerialForm" {
         Test-CaSerialForm "6AB1C2`tDEADBEEF" | Should -BeFalse
     }
 
-    It "refuses an EMBEDDED newline, which the \\A..\\z anchors are for" {
-        # PowerShell's $ anchor matches before a trailing newline, so a naive
-        # '^[0-9A-Fa-f]+$' would accept a multi-line value on the strength of
-        # its first line alone. Test-CaSerialForm uses \A..\z instead.
+    It "refuses an EMBEDDED newline" {
+        # An embedded newline is refused by the character class itself (it is
+        # not hex). The \A..\z anchors matter only for a TRAILING newline,
+        # which Trim() already removes -- see the next case.
         Test-CaSerialForm "6AB1C2`nDEADBEEF" | Should -BeFalse
         Test-CaSerialForm "6AB1C2`r`nDEADBEEF" | Should -BeFalse
         Test-CaSerialForm "6AB1C2`n-config EVIL" | Should -BeFalse

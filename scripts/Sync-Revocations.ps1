@@ -446,6 +446,11 @@ foreach ($entry in $pending) {
         )
         continue
     }
+    # One spelling from here on. The check above validated the TRIMMED value,
+    # and the child re-trims, but the confirm URL below is built from this
+    # variable; trimming once keeps every consumer on the value that was
+    # actually validated (2026-10-01 review).
+    $serial = $serial.Trim()
 
     if (-not $liveMode) {
         $dryRunCount++

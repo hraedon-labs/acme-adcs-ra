@@ -96,9 +96,10 @@ function Test-CaSerialForm([string]$Serial) {
     # -cmatch, not -match: the case-insensitive form is the default and the
     # character class already covers both cases, but pinning it makes the
     # intent explicit and immune to a caller changing $PSDefaultParameterValues.
-    # Anchors are ^...$ and PowerShell's $ tolerates a trailing newline, so the
-    # \A...\z form is used instead -- a serial with an embedded newline would
-    # otherwise pass and reach the argument.
+    # \A...\z rather than ^...$: .NET's $ also matches before a final newline.
+    # After Trim() no trailing newline survives, so today the two forms agree
+    # on every input; \A...\z keeps that true if the Trim ever moves, rather
+    # than relying on it.
     return $s -cmatch '\A[0-9A-Fa-f]+\z'
 }
 

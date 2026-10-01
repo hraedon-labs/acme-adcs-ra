@@ -1,8 +1,9 @@
 """Regression tests for the 2026-09-21 security review findings.
 
 Each test here was written against a *reproduced* defect: the behaviour it
-asserts is the one that was missing, and every test in this file was confirmed
-to fail against the pre-fix code.
+asserts is the one that was missing, and every regression test in this file
+was confirmed to fail against the pre-fix code (the positive controls and the
+missing-header cases are controls, and pass either way by design).
 
 Finding 1 — a non-ASCII ``Authorization`` header 500'd every admin endpoint.
 ``hmac.compare_digest`` raises ``TypeError`` (not ``False``) when handed a
@@ -57,6 +58,10 @@ def _client(tmp_path: Path, **overrides: Any) -> TestClient:
         enrollment=FakeEnrollmentLeg(),
         revocation=FakeRevocationLeg(),
     )
+    # raise_server_exceptions=False is deliberate HERE, and is not the pattern
+    # the WI-027 retraction warns about: these tests assert a STATUS (401), so
+    # the regression they guard surfaces as a 500 and fails the assertion. The
+    # warning applies to tests whose question is whether an exception escapes.
     return TestClient(create_app(ctx), raise_server_exceptions=False)
 
 
