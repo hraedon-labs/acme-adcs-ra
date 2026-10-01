@@ -28,8 +28,12 @@ also omits the inner nonce, per its source; not run here.
   MUST omit, and tolerating it would keep the old private dialect alive in the
   in-repo client. An inner `kid` is refused too (jwk and kid are mutually
   exclusive, §6.2).
-- Success now returns the updated account object, as §7.3.5 says, rather than
-  `{}`.
+- Success returns 200 with the account object (§7.3.5 requires only the 200;
+  an earlier draft of this note claimed it required the object — Daybreak Blue
+  round 5 corrected that). The object is serialized from the record already
+  read under the lock, so nothing fallible runs after the rotation commits; a
+  post-commit read that failed would have reported failure for a rollover that
+  had happened.
 - `HandRolledAcmeClient.key_change()` and two hand-built tests stop sending an
   inner nonce.
 
@@ -39,8 +43,9 @@ JWS could carry `{"header": {"nonce": …}}` past the refusal above. RFC 8555
 §6.2 says the unprotected header MUST NOT be used and a JWS MUST NOT carry
 multiple signatures; `header` and `signatures` are now refused (`malformed`)
 on the outer JWS, the keyChange inner JWS, and the EAB JWS (each leg has its
-own test). The structural check runs before the nonce is spent, like the other
-`malformed` shape checks, so a client can correct it without a new nonce.
+own test). On the outer JWS the check runs before the nonce is spent, like the
+other `malformed` shape checks, so a client can correct it without a new nonce;
+the inner and EAB checks necessarily run after the outer nonce is spent.
 
 **Replay analysis.** The whole request is single-use (the outer nonce); the
 inner JWS binds `url` (equal to the outer `url`) and `account` (equal to the
@@ -119,9 +124,9 @@ type and status are unchanged.
 
 ## Tests and mutation matrix
 
-New: `tests/test_key_change_rfc8555.py` (12), `tests/test_replay_nonce_rfc8555.py`
+New: `tests/test_key_change_rfc8555.py` (13), `tests/test_replay_nonce_rfc8555.py`
 (16). Each mutation below was applied alone against the final tree and both
-files (28 tests at round 4) re-run; the whole matrix was re-measured after round 3, since
+files (28 tests at round 4; the round-5 row on 29) re-run; the whole matrix was re-measured after round 3, since
 earlier rows had drifted as the design moved.
 
 | Mutation | Result |
@@ -139,12 +144,13 @@ earlier rows had drifted as the design moved.
 | middleware mint on the event loop | 1 fails |
 | badNonce mint not drawn from the bucket | 2 fail |
 | badNonce failed mint not converted to `rateLimited` | 1 fails |
-| badNonce sent without the nonce it minted | 2 fail |
+| badNonce sent without the nonce it minted | 3 fail |
 | nonce-less badNonce allowed (no `rateLimited` conversion) | 2 fail |
-| (round 3) unprotected `header` member no longer refused | 2 fail (inner and outer) |
+| (round 3) unprotected `header` member no longer refused | 3 fail (inner, outer, EAB `header`) |
 | (round 4) EAB leg of the §6.2 refusal removed | 2 fail (`header`, `signatures`) |
 | (round 4) badNonce handler mint run on the event loop | 1 fails |
 | (round 4) new-nonce route mint run on the event loop | 1 fails |
+| (round 5) a store read re-added after the committed rotation | 1 fails |
 
 Round 1 (DeepSeek) reported 5/6 for the first row from a hand-written
 approximation of the old route; it does not reproduce against the real file.

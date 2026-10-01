@@ -109,7 +109,7 @@ def test_rfc_shaped_inner_jws_without_nonce_rolls_the_key(tmp_path: Path) -> Non
     resp = _post(client, _outer_jws(client, acme, _inner_jws(acme, new_key)))
 
     assert resp.status_code == 200, resp.text
-    # §7.3.5: success returns "the updated account object", not {}.
+    # §7.3.5 requires 200; the body is the account object (was {}).
     body = resp.json()
     assert body["status"] == "valid"
     assert body["orders"].endswith("/orders")
@@ -293,3 +293,33 @@ def test_eab_jws_must_be_flattened_without_unprotected_header(
 
 def _post_to(client: TestClient, path: str, body: dict[str, Any]) -> Any:
     return client.post(path, content=json.dumps(body), headers={"Content-Type": "application/jose+json"})
+
+
+def test_nothing_fallible_runs_after_the_rotation_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Daybreak Blue round 5: a store read after the committed rotation could
+    fail and report failure for a rollover that had happened. Any read after
+    the commit now breaks the response."""
+    import sqlite3
+
+    client, store, acme = _setup(tmp_path)
+    original_update = store.update_account_key_with_audit
+    committed: list[bool] = []
+
+    def update(*args: Any, **kwargs: Any) -> Any:
+        result = original_update(*args, **kwargs)
+        committed.append(True)
+        return result
+
+    def get_account(account_id: str) -> Any:
+        if committed:
+            raise sqlite3.OperationalError("database is locked")
+        return original_get(account_id)
+
+    original_get = store.get_account
+    monkeypatch.setattr(store, "update_account_key_with_audit", update)
+    monkeypatch.setattr(store, "get_account", get_account)
+    resp = _post(client, _outer_jws(client, acme, _inner_jws(acme, ec.generate_private_key(ec.SECP256R1()))))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "valid"

@@ -47,6 +47,9 @@ async def _nonce_response(ctx: ServerContext) -> Response:
     # that waits out the busy timeout must not stall every other request
     # (DeepSeek round 4 noted this, the busiest unauthenticated mint, was
     # still on the loop).
+    # Unlike the response-time mints in server.py, a failure here is NOT
+    # swallowed: a new-nonce response without a nonce is useless, so it fails
+    # loud (500) rather than answer 204 with nothing.
     nonce = await run_in_threadpool(ctx.store.create_nonce)
     return Response(
         status_code=204,

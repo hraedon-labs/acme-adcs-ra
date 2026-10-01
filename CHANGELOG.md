@@ -13,7 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 acme.sh and Posh-ACME all failed key rollover with `badNonce` (reproduced with
 each). An absent inner nonce is now the accepted form and a present one is
 refused as `malformed`; only the outer nonce is spent. A successful rollover
-returns the updated account object instead of `{}`.
+returns 200 with the account object instead of `{}`.
 
 **Every successful ACME POST, and every `badNonce`, now carries
 `Replay-Nonce` (WI-042).** The header used to appear only on `new-nonce`, which

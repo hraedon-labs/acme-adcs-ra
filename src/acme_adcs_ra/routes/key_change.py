@@ -12,7 +12,6 @@ from acme_adcs_ra.acme_errors import (
     bad_public_key,
     malformed,
     rate_limited,
-    server_internal,
     unauthorized,
 )
 from acme_adcs_ra.app_state import (
@@ -237,9 +236,9 @@ async def key_change(
         raise
     emit_audit_hook(ctx, event)
 
-    # RFC 8555 §7.3.5: on success the server "returns status code 200 (OK) and
-    # the updated account object". This used to return ``{}``.
-    refreshed = ctx.store.get_account(account_id)
-    if refreshed is None:
-        raise server_internal("account disappeared after key rollover")
-    return JSONResponse(content=_account_to_json(ctx, refreshed))
+    # RFC 8555 §7.3.5 requires only 200 (OK). The body is the account object
+    # (status, contact, orders — none changed by a rollover), serialized from
+    # the record read under the lock, so nothing fallible runs after the
+    # rotation has committed: a post-commit read that failed would tell the
+    # client "failed" while its old key was already gone (Daybreak Blue r5).
+    return JSONResponse(content=_account_to_json(ctx, current))
