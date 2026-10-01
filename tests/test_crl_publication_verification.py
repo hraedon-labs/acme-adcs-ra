@@ -49,7 +49,7 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ExtensionOID, NameOID
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _NOW = datetime.datetime.now(datetime.UTC)
@@ -560,3 +560,84 @@ class TestThirdRound:
                   issuer_pem=expired)
         assert rc == 2
         assert "not currently valid" in capsys.readouterr().err
+
+
+class TestFourthRound:
+    """Fourth review round (2026-10-01)."""
+
+    def test_an_empty_reason_scope_still_fails(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The builder drops an empty reason set, so the DER is hand-built:
+        # IDP ::= SEQUENCE { [0] { [0] { [6] uri } }, [3] BIT STRING (empty) }
+        uri = b"http://ca.example/ca.crl"
+        general_name = b"\x86" + bytes([len(uri)]) + uri
+        full_name = b"\xa0" + bytes([len(general_name)]) + general_name
+        dp = b"\xa0" + bytes([len(full_name)]) + full_name
+        inner = dp + b"\x83\x01\x00"
+        der = b"\x30" + bytes([len(inner)]) + inner
+        idp = x509.UnrecognizedExtension(ExtensionOID.ISSUING_DISTRIBUTION_POINT, der)
+        body = _crl(ca, number=131, serials=[0x5A01], extra_extensions=((idp, True),))
+        parsed = x509.load_der_x509_crl(body).extensions.get_extension_for_class(
+            x509.IssuingDistributionPoint
+        ).value
+        assert parsed.only_some_reasons == frozenset()  # the fixture is what it claims
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS, ca=ca)
+        assert rc == 1
+        assert "some revocation reasons only" in capsys.readouterr().err
+
+    def test_a_negative_prior_number_is_not_a_verdict(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        body = _crl(ca, number=0, serials=[0x5A01])
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", "--absent", "5AFF",
+                  "--prior-crl-number=-1", ca=ca)
+        captured = capsys.readouterr()
+        assert rc == 2
+        assert ">= 0" in captured.err
+        assert "CRL-PUBLICATION-VERIFIED" not in captured.out
+
+    def test_a_not_yet_valid_issuer_certificate_is_refused(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        key, name = ca
+        future = (
+            x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(3)
+            .not_valid_before(_NOW + datetime.timedelta(days=1))
+            .not_valid_after(_NOW + datetime.timedelta(days=30))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(key, hashes.SHA256())
+        ).public_bytes(serialization.Encoding.PEM)
+        body = _crl(ca, number=131, serials=[0x5A01])
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                  issuer_pem=future)
+        assert rc == 2
+        assert "not currently valid" in capsys.readouterr().err
+
+
+    def test_a_bom_prefixed_pem_issuer_loads(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+    ) -> None:
+        body = _crl(ca, number=131, serials=[0x5A01])
+        assert _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                    issuer_pem=b"\xef\xbb\xbf" + _ca_cert(ca)) == 0
+
+    def test_a_malformed_extension_is_no_verdict_not_a_traceback(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # An empty IssuingDistributionPoint SEQUENCE: loads, then raises when
+        # the extension is first parsed inside check().
+        empty_idp = x509.UnrecognizedExtension(
+            ExtensionOID.ISSUING_DISTRIBUTION_POINT, b"\x30\x00"
+        )
+        body = _crl(ca, number=131, serials=[0x5A01],
+                    extra_extensions=((empty_idp, True),))
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS, ca=ca)
+        assert rc == 2
+        assert "malformed CRL" in capsys.readouterr().err

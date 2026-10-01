@@ -11,8 +11,8 @@ every relying party still accepts them. It was found by accident, because an
 unrelated publication made the entry count jump by thirty-one.
 
 A certificate the CA considers revoked but that no relying party can see as
-revoked is precisely the state this product's revocation story exists to
-prevent. Leaving the lab in it also means the *next* session's CRL evidence and
+revoked is the gap this product's revocation evidence exists to make visible;
+the least-privilege path accepts it only until the next scheduled publication. Leaving the lab in it also means the *next* session's CRL evidence and
 the watermark's first-use baseline run against a CRL silently missing the prior
 session's revocations.
 
@@ -35,6 +35,10 @@ review round added: ``--issuer`` must be exactly one CA certificate able to sign
 CRLs; ``thisUpdate`` may not be in the future (5 minutes' skew); an indirect CRL,
 a CRL scoped away from end-entity certificates, an entry naming another issuer,
 and any critical extension this script does not understand are all refused.
+Rounds three and four added: an onlySomeReasons scope (even an empty one), an
+--issuer file with anything but certificate blocks outside a leading BOM, an
+issuer certificate outside its validity period, and a negative
+--prior-crl-number; a malformed extension is "no verdict" (exit 2).
 
 **Controls, because absence proves nothing on its own.** A CRL lookup that
 matches nothing returns exactly what a correct negative returns. Two controls
@@ -175,13 +179,17 @@ def load_issuer(body: bytes) -> x509.Certificate:
         # PEM must be ONLY certificate blocks: the PEM loader skips anything
         # between them, so a trailing DER certificate (or any other bytes)
         # would otherwise be dropped without a word.
-        if _PEM_CERT.sub(b"", body).strip():
+        # A leading UTF-8 BOM (common in Windows-exported PEM) is tolerated;
+        # any other bytes outside the certificate blocks are not.
+        if _PEM_CERT.sub(b"", body.removeprefix(b"\xef\xbb\xbf")).strip():
             raise RuntimeError(
                 "issuer file is neither one DER certificate nor PEM certificate "
                 "blocks only"
             ) from None
         try:
-            certificates = x509.load_pem_x509_certificates(body)
+            certificates = x509.load_pem_x509_certificates(
+                body.removeprefix(b"\xef\xbb\xbf")
+            )
         except ValueError:
             raise RuntimeError(
                 "issuer file is neither a DER nor a PEM certificate"
@@ -307,7 +315,9 @@ def check(
                 "this is an indirect CRL; its entries can belong to other CAs, "
                 "so a serial match does not attribute a revocation to --issuer"
             )
-        if idp.only_some_reasons:
+        # `is not None`: a present-but-EMPTY onlySomeReasons is still a scope
+        # (2026-10-01 round 4), and a falsy test let it through.
+        if idp.only_some_reasons is not None:
             failures.append(
                 "this CRL is scoped to some revocation reasons only, so it can "
                 "be silent about a revocation for any other reason"
@@ -454,6 +464,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"CRL-PUBLICATION-FAILED bad serial: {exc}", file=sys.stderr)
         return 2
+    if args.prior_crl_number is not None and args.prior_crl_number < 0:
+        # A CRL Number is non-negative, so a negative "prior" was never
+        # observed and would let CRL Number 0 pass the freshness control.
+        print(
+            "CRL-PUBLICATION-INDETERMINATE --prior-crl-number must be a CRL "
+            "Number actually observed (>= 0)",
+            file=sys.stderr,
+        )
+        return 2
     if revoked and (not absent or args.prior_crl_number is None):
         # The controls are what make a "listed" answer mean something. A run
         # without them cannot verify, so it does not get to try.
@@ -488,13 +507,19 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
-    lines, failures = check(
-        crl,
-        issuer=issuer,
-        revoked=revoked,
-        absent=absent,
-        prior_crl_number=args.prior_crl_number,
-    )
+    try:
+        lines, failures = check(
+            crl,
+            issuer=issuer,
+            revoked=revoked,
+            absent=absent,
+            prior_crl_number=args.prior_crl_number,
+        )
+    except (ValueError, x509.DuplicateExtension) as exc:
+        # cryptography parses extensions lazily, so a malformed or duplicated
+        # one surfaces here rather than at load. No verdict, not a traceback.
+        print(f"CRL-PUBLICATION-INDETERMINATE malformed CRL: {exc}", file=sys.stderr)
+        return 2
     for line in lines:
         print(line)
 

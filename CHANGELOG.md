@@ -66,7 +66,10 @@ from a cache; both are required. The CRL must also name and verify under the
 required `--issuer`, be a base CRL and be unexpired, and a `removeFromCRL` entry
 is not counted as listed (all added after a 2026-10-01 cross-lineage review
 found the first version printed the verified banner for a CRL signed by any
-key). An
+key). Later rounds the same day also refuse future-dated, indirect and
+reason-scoped CRLs, entries naming another issuer, unknown critical
+extensions, and an `--issuer` that is not exactly one currently valid CA
+certificate able to sign CRLs. An
 unreachable CDP exits 2 — no evidence either way — distinct from the exit 1 that
 means the serials are genuinely not there. `docs/live-reproof-runbook.md` §E now
 requires it.

@@ -187,12 +187,13 @@ certificate the session created still accepted by every relying party until the
 next scheduled publication — on a one-week `CRLPeriod`, for close to a week.
 
 That is not lab housekeeping. A certificate the CA considers revoked but that
-nobody can see as revoked is precisely the state this product's revocation story
-exists to prevent, and leaving the lab in it also means the *next* session's
-`require_crl_evidence` checks and the watermark's first-use baseline run against
-a CRL silently missing the previous session's revocations — which makes any
-cross-session claim about revocation latency un-measurABLE, in the same way item
-22 made the CRL age un-measurable.
+nobody can see as revoked is the gap this product's revocation evidence exists
+to make visible (the least-privilege path accepts it only until the next
+scheduled publication, and records it), and leaving the lab in it also means the
+*next* session's `require_crl_evidence` checks and the watermark's first-use
+baseline run against a CRL silently missing the previous session's revocations —
+which leaves cross-session revocation latency measurable only from CA timestamps
+and the external sampler, not from the RA's own evidence.
 
 It went unnoticed for rounds because the validation log asserted it. Entries for
 earlier rounds say "revoked … and the CRL republished"; at least one round did
