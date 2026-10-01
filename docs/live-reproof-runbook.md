@@ -117,12 +117,13 @@ INJECT_BAD_NONCE_EVERY=0 interop/run.sh                 # no fault injection
 It builds the RA from the tree under test (hash-pinned production closure),
 fronts it with a TLS proxy, and replaces only the enrollment leg with an
 in-memory signer (`interop/ra_harness_entry.py`, outside `src/` and never in the
-wheel). Each client drives what it supports: directory, new-nonce,
+wheel or sdist). Each client drives what it supports: directory, new-nonce HEAD,
 new-account (EAB), account update, new-order, authz POST-as-GET, challenge,
 finalize, order polling, certificate download, **keyChange**, revokeCert, and
 deactivation. The proxy burns the nonce of every Nth JWS POST before forwarding
 it, so **every injecting run (the default, and CI) exercises each client's
-badNonce-retry path**; the summary line reports how many injections happened. Output: one
+badNonce-retry path**; each injection must produce `badNonce` and a successful
+retry to the same endpoint. Output: one
 `RESULT <client> <step> PASS|FAIL|SKIP` line per step, transcripts under
 `$INTEROP_WORK/out` (proxy log = every request the client actually sent).
 Transcripts include the run's throwaway EAB HMAC keys in client argv; they are
@@ -134,9 +135,13 @@ Coverage gaps, stated rather than implied: certbot has no keyChange; the lego
 CLI has no account deactivation; after deactivation certbot (which deleted its
 local account and would try a fresh registration) and Posh-ACME (which refuses
 locally) send no request with the old key, so only acme.sh proves the
-server-side refusal. Each run also asserts, per client, that every step the
-scenario declares reported, that the container exited 0, and (when injecting)
-that at least one burned nonce reached that client and was refused with 401.
+server-side refusal. No stock client in this harness sends `GET /acme/new-nonce`
+or `POST /acme/acct/{id}/orders`; the endpoint inventory reports those two as
+explicit SKIPs and fails on any other unexercised endpoint class. Each run also
+asserts, per client, that every step the scenario declares reported, that the
+container exited 0, and (when injecting)
+that at least one burned nonce reached that client, produced a 400 `badNonce`
+response, and was followed by a successful retry to the same path.
 "No real CA" is exact; "offline" is not — the runner pulls the pinned images
 and Posh-ACME from PSGallery. acme.sh must be told `--extended-key-usage serverAuth`
 (its default CSR also asks for clientAuth, which the RA refuses by design).

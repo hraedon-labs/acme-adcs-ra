@@ -36,6 +36,9 @@ packages = ["src/acme_adcs_ra"]
 # and forced into the wheel via the artifacts key below.
 artifacts = ["src/acme_adcs_ra/fixtures/*.pem"]
 
+[tool.hatch.build.targets.sdist]
+exclude = ["interop"]
+
 [tool.ruff]
 line-length = 100
 

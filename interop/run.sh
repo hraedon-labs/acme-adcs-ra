@@ -22,7 +22,16 @@
 # Env:    INTEROP_WORK=<dir>  (default: mktemp -d)   KEEP=1 to leave containers up
 #         RA_SRC=<checkout>   RA source tree to test (default: this repository)
 # Exit:   0 = every expected step passed; 1 = at least one FAIL; 2 = harness error
-set -euo pipefail
+set -Eeuo pipefail
+
+on_err() {
+    local status=$?
+    local line="$1"
+    trap - ERR
+    echo "HARNESS ERROR at line $line (exit $status)" >&2 || true
+    exit 2
+}
+trap 'on_err "$LINENO"' ERR
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RA_SRC="$(cd "${RA_SRC:-$REPO}" && pwd)"
@@ -56,14 +65,18 @@ chmod 0777 "$WORK"/out "$WORK"/data
 echo "interop work dir: $WORK"
 
 cleanup() {
+    local status=$?
+    trap - EXIT
+    set +e
     if [ "${KEEP:-0}" = 1 ]; then
-        echo "KEEP=1: leaving $RUN_ID containers and network up"
-        return
+        echo "KEEP=1: leaving $RUN_ID containers and network up" || true
+        exit "$status"
     fi
     docker logs "$RUN_ID-ra" >"$WORK/out/ra.log" 2>&1 || true
     docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1 || true
-    docker ps -aq --filter "name=^$RUN_ID-" | xargs -r docker rm -f >/dev/null
+    docker ps -aq --filter "name=^$RUN_ID-" | xargs -r docker rm -f >/dev/null || true
     docker network rm "$NET" >/dev/null 2>&1 || true
+    exit "$status"
 }
 trap cleanup EXIT
 
@@ -124,7 +137,7 @@ if [ "${ready:-0}" != 1 ]; then
 fi
 
 run_client() {
-    local c="$1" image entry script
+    local c="$1" image entry script proxy_before proxy_after window
     case "$c" in
         certbot)   image="$CERTBOT_IMAGE"; entry=sh;   script=/harness/clients/certbot.sh ;;
         lego)      image="$LEGO_IMAGE";    entry=sh;   script=/harness/clients/lego.sh ;;
@@ -133,6 +146,9 @@ run_client() {
         *) echo "unknown client $c"; return 2 ;;
     esac
     mkdir -p "$WORK/w-$c"; chmod 0777 "$WORK/w-$c"
+    docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1
+    proxy_before=$(wc -l <"$WORK/out/proxy.log")
+    window="$WORK/out/proxy-$c.log"
     local args=()
     [ "$entry" = pwsh ] && args=(-NoProfile -File)
     local rc=0
@@ -148,29 +164,63 @@ run_client() {
     # reported, and the container must have exited 0. A client that prints one
     # PASS and then crashes is a FAIL, not a short green run.
     local s
-    for s in $(expected_steps "$REPO/interop/clients/$(basename "$script")"); do
+    local -a steps=()
+    mapfile -t steps < <(expected_steps "$REPO/interop/clients/$(basename "$script")")
+    if [ "${#steps[@]}" -eq 0 ]; then
+        echo "RESULT $c scenario FAIL (zero declared steps)"
+    fi
+    for s in "${steps[@]}"; do
         grep -Eq "^RESULT [^ ]+ $s (PASS|FAIL|SKIP)" "$WORK/out/$c.log" \
             || echo "RESULT $c $s FAIL (step never reported; see $WORK/out/$c.log)"
     done
     [ "$rc" -eq 0 ] || echo "RESULT $c container FAIL (exit $rc; see $WORK/out/$c.log)"
-    # Injection coverage, attributed per client (clients run one at a time):
-    # each must have met at least one burned nonce, and every burn must have
-    # been refused by the RA (401) -- otherwise the retry path was not proven.
+    docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1
+    proxy_after=$(wc -l <"$WORK/out/proxy.log")
+    : >"$window"
+    if [ "$proxy_after" -gt "$proxy_before" ]; then
+        sed -n "$((proxy_before + 1)),${proxy_after}p" "$WORK/out/proxy.log" >"$window"
+    fi
+    cat "$window" >>"$WORK/out/proxy-clients.log"
+    # Attribute injection proof to this client's exact proxy-log window.
     if [ "$INJECT" -gt 0 ]; then
-        docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1 || true
-        local total burns bad
-        total=$(grep -c '^INJECT ' "$WORK/out/proxy.log" || true)
-        # run_client runs in a pipeline subshell, so the running total lives
-        # in a file, not a variable.
-        local before; before=$(cat "$WORK/out/.injected" 2>/dev/null || echo 0)
-        burns=$((total - before)); echo "$total" >"$WORK/out/.injected"
-        bad=$(grep '^INJECT ' "$WORK/out/proxy.log" | tail -n "$burns" | grep -vc -- '-> 401$' || true)
+        local burns after bad retries missing
+        read -r burns after bad retries missing < <(
+            awk '
+                $1 == "INJECT" { burns++ }
+                $1 == "AFTER-INJECT" {
+                    after++
+                    path = $2
+                    type = $5
+                    sub(/^type=/, "", type)
+                    if ($4 != 400 || type != "urn:ietf:params:acme:error:badNonce") bad++
+                    pending[path]++
+                    next
+                }
+                $1 == "POST" {
+                    path = $2
+                    status = 0
+                    for (i = 3; i < NF; i++) if ($i == "->") status = $(i + 1)
+                    if (pending[path] > 0 && status >= 200 && status < 300) {
+                        pending[path]--
+                        retries++
+                    }
+                }
+                END {
+                    missing = after - retries
+                    printf "%d %d %d %d %d\n", burns, after, bad, retries, missing
+                }
+            ' "$window"
+        )
         if [ "$burns" -lt 1 ]; then
-            echo "RESULT $c badnonce-coverage FAIL (no injected badNonce reached this client)"
+            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after retries=$retries; no injection reached this client)"
+        elif [ "$after" -ne "$burns" ]; then
+            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after retries=$retries; forwarded-request proof count differs)"
         elif [ "$bad" -gt 0 ]; then
-            echo "RESULT $c badnonce-coverage FAIL ($bad burned request(s) not refused with 401)"
+            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after invalid=$bad retries=$retries; expected 400 badNonce)"
+        elif [ "$missing" -gt 0 ]; then
+            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after retries=$retries missing=$missing; expected later same-path 2xx)"
         else
-            echo "RESULT $c badnonce-coverage PASS ($burns injected, each burned with 401; the steps above passed through them)"
+            echo "RESULT $c badnonce-coverage PASS (burns=$burns after=$after retries=$retries)"
         fi
     fi
 }
@@ -182,16 +232,52 @@ expected_steps() {
     esac
 }
 
+inventory_check() {
+    local endpoint pattern count
+    while IFS='|' read -r endpoint pattern; do
+        count=$(grep -Ec "$pattern" "$WORK/out/proxy-clients.log" || true)
+        if [ "$count" -gt 0 ]; then
+            echo "RESULT inventory $endpoint PASS ($count requests)"
+        else
+            case "$endpoint" in
+                new-nonce-get|acct-orders-list)
+                    echo "RESULT inventory $endpoint SKIP (no stock client in this harness exercises it)"
+                    ;;
+                *)
+                    echo "RESULT inventory $endpoint FAIL (0 requests)"
+                    ;;
+            esac
+        fi
+    done <<'EOF'
+directory-get|^GET /directory([?][^ ]*)? ct=
+new-nonce-head|^HEAD /acme/new-nonce([?][^ ]*)? ct=
+new-nonce-get|^GET /acme/new-nonce([?][^ ]*)? ct=
+new-acct|^POST /acme/new-acct([?][^ ]*)? ct=
+acct-post|^POST /acme/acct/[^/ ?]+([?][^ ]*)? ct=
+acct-orders-list|^POST /acme/acct/[^/ ?]+/orders([?][^ ]*)? ct=
+new-order|^POST /acme/new-order([?][^ ]*)? ct=
+order-post-as-get|^POST /acme/order/[^/ ?]+([?][^ ]*)? ct=
+authz|^POST /acme/authz/[^/ ?]+([?][^ ]*)? ct=
+challenge|^POST /acme/challenge/[^/ ?]+([?][^ ]*)? ct=
+finalize|^POST /acme/finalize/[^/ ?]+([?][^ ]*)? ct=
+cert|^POST /acme/cert/[^/ ?]+([?][^ ]*)? ct=
+revoke-cert|^POST /acme/revoke-cert([?][^ ]*)? ct=
+key-change|^POST /acme/key-change([?][^ ]*)? ct=
+EOF
+}
+
 : >"$WORK/out/results.txt"
+: >"$WORK/out/proxy-clients.log"
 for c in "${CLIENTS[@]}"; do
     echo "--- $c"
     run_client "$c" | tee -a "$WORK/out/results.txt"
 done
 
-docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1 || true
+docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1
+inventory_check | tee -a "$WORK/out/results.txt"
 injected=$(grep -c '^INJECT ' "$WORK/out/proxy.log" || true)
 echo "badNonce injections performed: $injected (every $INJECT POSTs)"
-pass=$(grep -c ' PASS$' "$WORK/out/results.txt" || true)
+pass=$(grep -Ec ' PASS($| \()' "$WORK/out/results.txt" || true)
 fail=$(grep -c ' FAIL' "$WORK/out/results.txt" || true)
 skip=$(grep -c ' SKIP' "$WORK/out/results.txt" || true)
 echo "SUMMARY pass=$pass fail=$fail skip=$skip  (transcripts: $WORK/out)"

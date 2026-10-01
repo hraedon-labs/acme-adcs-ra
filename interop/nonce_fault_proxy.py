@@ -74,6 +74,17 @@ def _corrupt_signature(body: bytes) -> bytes | None:
     return json.dumps(jws).encode()
 
 
+def _problem_type(body: bytes) -> str:
+    try:
+        problem = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
+        return "-"
+    if not isinstance(problem, dict):
+        return "-"
+    problem_type = problem.get("type")
+    return problem_type if isinstance(problem_type, str) else "-"
+
+
 def make_handler(upstream_host: str, upstream_port: int, state: _State, log: TextIO) -> type:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -110,6 +121,13 @@ def make_handler(upstream_host: str, upstream_port: int, state: _State, log: Tex
                 print(f"INJECT {self.path} burned nonce -> {burn.status}", file=log, flush=True)
             resp = self._upstream(method, body)
             payload = resp.read()
+            if injected:
+                problem_type = _problem_type(payload) if resp.status >= 400 else "-"
+                print(
+                    f"AFTER-INJECT {self.path} -> {resp.status} type={problem_type}",
+                    file=log,
+                    flush=True,
+                )
             print(
                 f"{method} {self.path} ct={self.headers.get('Content-Type')!r} -> "
                 f"{resp.status} nonce={'Replay-Nonce' in resp.headers}"
