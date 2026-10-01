@@ -1,4 +1,4 @@
-"""Startup floor on EAB kid length, grandfathering kids already in use (WI-034).
+"""Startup floor on EAB kid length, grandfathering kids already in use (WI-044).
 
 ``config._credentials_are_strong`` floors the EAB MAC key at load time. The kid
 had no floor at all, although threat model §4.B treats an unguessable kid as

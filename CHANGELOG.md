@@ -8,18 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### RFC 8555 error mappings, media type, EAB kid floor, challenge Link (2026-10-01)
 
-- **Finalize on a not-ready order is 403 `orderNotReady`** (§7.4, WI-033), not
+- **Finalize on a not-ready order is 403 `orderNotReady`** (§7.4, WI-043), not
   `malformed`/400 — including an order found expired at finalize. `valid` and
   `processing` orders are still answered with the order, deliberately.
 - **An unsupported JWS `alg` is 400 `badSignatureAlgorithm`** with the
-  `algorithms` array §6.2 requires (WI-033), on account requests, newAccount
+  `algorithms` array §6.2 requires (WI-043), on account requests, newAccount
   and the keyChange inner JWS. The allowlist is unchanged.
 - **ACME POSTs must be `application/jose+json`; anything else is 415** (§6.2,
-  WI-034), checked before the body is read or a nonce spent.
-- **EAB kids shorter than 22 characters refuse startup** (WI-034) unless the
+  WI-044), checked before the body is read or a nonce spent.
+- **EAB kids shorter than 22 characters refuse startup** (WI-044) unless the
   kid already has accounts — then it is grandfathered with a warning on every
   start — or `allow_weak_credentials` is set. `scripts/eab.py` kids pass.
-- **Challenge responses carry `Link: <authz>;rel="up"`** (WI-036). certbot
+- **Challenge responses carry `Link: <authz>;rel="up"`** (WI-046). certbot
   aborted issuance without it.
 
 See `docs/security-review-2026-10-01-conformance.md`.

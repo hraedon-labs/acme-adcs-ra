@@ -279,7 +279,7 @@ async def finalize_order(
         return expired_resp
 
     # RFC 8555 §7.4: finalize on a not-ready order MUST be 403 orderNotReady
-    # (WI-033; it used to be malformed/400). ``valid`` and ``processing`` are
+    # (WI-043; it used to be malformed/400). ``valid`` and ``processing`` are
     # answered above with the current order instead, deliberately: a retried
     # finalize must never read as an error once issuance has happened or is
     # under way, and the double-issuance guard depends on that path.

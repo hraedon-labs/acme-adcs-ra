@@ -81,7 +81,7 @@ def _up_link(ctx: ServerContext, authz_id: str) -> dict[str, str]:
     """RFC 8555 §7.1: the "up" link relation points a challenge at its
     authorization (§7.5.1). acme-python (certbot) requires it on the challenge
     response and aborts issuance without it ("up" Link header missing) — found
-    by the stock-client interop harness (WI-036)."""
+    by the stock-client interop harness (WI-046)."""
     return {"Link": f'<{_url(ctx, f"/acme/authz/{authz_id}")}>;rel="up"'}
 
 

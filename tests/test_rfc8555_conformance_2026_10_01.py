@@ -1,12 +1,12 @@
 """RFC 8555 error mappings, media type, challenge Link, and the EAB kid floor.
 
-WI-033 (UNFILED item 29): finalize on a not-ready order -> 403 orderNotReady
+WI-043 (UNFILED item 29): finalize on a not-ready order -> 403 orderNotReady
   (§7.4); an unsupported JWS alg -> 400 badSignatureAlgorithm with an
   ``algorithms`` array (§6.2).
-WI-034 (UNFILED item 30): POSTs that are not application/jose+json -> 415
+WI-044 (UNFILED item 30): POSTs that are not application/jose+json -> 415
   (§6.2); EAB kids below the 22-character floor refuse startup unless they are
   already in use (grandfathered) or ``allow_weak_credentials`` is set.
-WI-036: the challenge response carries ``Link: <authz>;rel="up"`` (§7.1,
+WI-046: the challenge response carries ``Link: <authz>;rel="up"`` (§7.1,
   §7.5.1); certbot aborts issuance without it.
 """
 
@@ -78,7 +78,7 @@ def _unsigned_jws(protected: dict[str, Any], payload: dict[str, Any] | None) -> 
     }
 
 
-# --- WI-033 (a): orderNotReady -------------------------------------------------
+# --- WI-043 (a): orderNotReady -------------------------------------------------
 
 
 def test_finalize_on_a_pending_order_is_403_order_not_ready(tmp_path: Path) -> None:
@@ -92,6 +92,29 @@ def test_finalize_on_a_pending_order_is_403_order_not_ready(tmp_path: Path) -> N
     order_id = order["finalize"].rsplit("/", 1)[-1]
     refreshed = store.get_order(order_id)
     assert refreshed is not None and refreshed.status == "pending"
+
+
+def test_finalize_on_an_expired_order_already_invalid_is_403(tmp_path: Path) -> None:
+    """The CAS-lost expiry branch (finalize.py): the order is expired but
+    something else already flipped it to invalid, so the CAS does not apply.
+    Deterministically reachable (DeepSeek round 3), so it gets its own test."""
+    _client, store, acme = _setup(tmp_path)
+    order = acme.new_order([SAN]).json()
+    authz = acme.get_authorization(order["authorizations"][0]).json()
+    acme.validate_challenge(authz["challenges"][0]["url"])
+    order_id = order["finalize"].rsplit("/", 1)[-1]
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE orders SET expires = '2000-01-01T00:00:00Z', status = 'invalid' "
+            "WHERE id = ?",
+            (order_id,),
+        )
+
+    resp = acme.finalize_order(order["finalize"], _csr(SAN))
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:orderNotReady"
+    assert "expired" in resp.json()["detail"]
 
 
 def test_finalize_on_a_valid_order_still_answers_with_the_order(tmp_path: Path) -> None:
@@ -108,7 +131,7 @@ def test_finalize_on_a_valid_order_still_answers_with_the_order(tmp_path: Path) 
     assert again.json()["status"] == "valid"
 
 
-# --- WI-033 (b): badSignatureAlgorithm -----------------------------------------
+# --- WI-043 (b): badSignatureAlgorithm -----------------------------------------
 
 
 @pytest.mark.parametrize("alg", ["HS256", "none", "PS256", "EdDSA"])
@@ -172,7 +195,7 @@ def test_a_bad_signature_with_a_supported_alg_stays_unauthorized(tmp_path: Path)
     assert resp.json()["type"] == "urn:ietf:params:acme:error:unauthorized"
 
 
-# --- WI-034 (a): application/jose+json -----------------------------------------
+# --- WI-044 (a): application/jose+json -----------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -273,7 +296,7 @@ def test_admin_json_endpoints_are_not_subject_to_the_jose_rule(tmp_path: Path) -
     assert resp.status_code != 415
 
 
-# --- WI-034 (b): EAB kid floor ------------------------------------------------
+# --- WI-044 (b): EAB kid floor ------------------------------------------------
 
 
 def _config_with_kid(tmp_path: Path, kid: str, **extra: Any) -> RAConfig:
@@ -367,7 +390,7 @@ def test_grandfathering_is_per_kid(tmp_path: Path) -> None:
         _make_app(both)
 
 
-# --- WI-036: challenge Link rel="up" ------------------------------------------
+# --- WI-046: challenge Link rel="up" ------------------------------------------
 
 
 def test_challenge_response_links_up_to_its_authorization(tmp_path: Path) -> None:

@@ -127,7 +127,7 @@ def _require_jose_json(request: Request) -> None:
     wrong-media-type request costs nothing. Media-type parameters (e.g.
     ``; charset=utf-8``) are ignored and the type compares case-insensitively,
     per RFC 9110 §8.3.1. The threat model's CSRF argument leaned on this
-    property while the code did not enforce it (WI-034).
+    property while the code did not enforce it (WI-044).
     """
     # Exactly one Content-Type field. Starlette's .get() returns the FIRST of
     # duplicates, so "jose+json, then text/plain" passed while the reverse was

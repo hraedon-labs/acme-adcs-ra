@@ -1549,7 +1549,7 @@ class TestOrderExpiryEnforcement:
         _backdate_order(store, order_id)
 
         resp = acme_client.finalize_order(order["finalize"], _make_csr(["web.WORK-DOMAIN.local"]))
-        # RFC 8555 §7.4: not ready (now invalid) -> 403 orderNotReady (WI-033).
+        # RFC 8555 §7.4: not ready (now invalid) -> 403 orderNotReady (WI-043).
         assert resp.status_code == 403
         assert resp.json()["type"] == "urn:ietf:params:acme:error:orderNotReady"
         assert "expired" in resp.json()["detail"]

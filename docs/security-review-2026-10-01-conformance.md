@@ -1,11 +1,11 @@
-# 2026-10-01 — RFC 8555 error mappings, media type, kid floor, challenge Link (WI-033, WI-034, WI-036)
+# 2026-10-01 — RFC 8555 error mappings, media type, kid floor, challenge Link (WI-043, WI-044, WI-046)
 
-Second of the 2026-10-01 conformance PRs (the first, WI-031/032, is
+Second of the 2026-10-01 conformance PRs (the first, WI-041/032, is
 `docs/security-review-2026-10-01.md`). Items 29 and 30 of
-`UNFILED-WORK-ITEMS.md` (store WI-033, WI-034), plus WI-036, which the
-stock-client interop harness (WI-035) found once certbot could register.
+`UNFILED-WORK-ITEMS.md` (store WI-043, WI-044), plus WI-046, which the
+stock-client interop harness (WI-045) found once certbot could register.
 
-## WI-033 (a) — finalize on a not-ready order: 403 `orderNotReady`
+## WI-043 (a) — finalize on a not-ready order: 403 `orderNotReady`
 
 RFC 8555 §7.4: *"A request to finalize an order will result in error if the
 order is not in the 'ready' state. In such cases, the server MUST return a 403
@@ -22,7 +22,7 @@ that path. Strict §7.4 would make both a 403; changing it would put the
 finalize-retry behaviour every client depends on at risk for no security gain.
 Recorded here rather than silently left.
 
-## WI-033 (b) — unsupported `alg`: 400 `badSignatureAlgorithm` + `algorithms`
+## WI-043 (b) — unsupported `alg`: 400 `badSignatureAlgorithm` + `algorithms`
 
 §6.2: an unsupported JWS algorithm MUST be 400 `badSignatureAlgorithm`, and the
 problem document MUST include an `algorithms` array. A new
@@ -34,7 +34,7 @@ keyChange inner JWS. `AcmeError` gained RFC 7807 extension members to carry
 the array. The allowlist itself is unchanged; this is the error mapping only.
 A forged signature under a supported `alg` is still `unauthorized`.
 
-## WI-034 (a) — `application/jose+json` enforced (415)
+## WI-044 (a) — `application/jose+json` enforced (415)
 
 §6.2: a request without `Content-Type: application/jose+json` MUST get 415.
 The threat model's CSRF argument relied on this property while the code never
@@ -51,11 +51,11 @@ a list however it arrived (folded duplicates, unfolded obs-fold): round 2 found
 by splitting at `;` before looking for a list. A
 **missing** Content-Type is also 415: §6.2's wording is "if a request does not
 meet this requirement", and a request without the field does not. The problem type is
-`malformed` — RFC 8555 registers none for 415. Admin JSON endpoints do not use
+`malformed` — RFC 8555 registers none for 415. Because the check precedes the body read, an oversized body with a wrong type is now 415 rather than 413. Admin JSON endpoints do not use
 `_parse_jws_body` and are unaffected. All four stock clients send the right
 type (harness transcripts).
 
-## WI-034 (b) — EAB kid floor, grandfathering kids in use
+## WI-044 (b) — EAB kid floor, grandfathering kids in use
 
 `MIN_EAB_KID_CHARS = 22`: the necessary-not-sufficient length for 128 random
 bits in base64url. No length rule measures entropy; `scripts/eab.py` mints 32
@@ -86,7 +86,7 @@ Test churn: the suite's fixture kids (`kid-001` …) were 5–9 characters and a
 now padded to ≥ 22 across 26 test files, mechanically; `tests/test_eab.py` is
 left alone because it exercises the audit CLI only, not `create_app`.
 
-## WI-036 — challenge responses link `up` to the authorization
+## WI-046 — challenge responses link `up` to the authorization
 
 Found by the interop harness: with Replay-Nonce fixed, certbot 5.8.0 reached
 the challenge and aborted (`"up" Link header missing`). §7.1 defines the `up`
@@ -96,7 +96,7 @@ short-circuit) now carry `Link: <authz-url>;rel="up"`. Still open: the `index`
 relation §7.1 describes on every non-directory resource is not sent; no client
 in the harness needs it.
 
-## Found on the way: a false RFC citation in revokeCert (WI-037, not changed)
+## Found on the way: a false RFC citation in revokeCert (WI-047, not changed)
 
 The harness's certbot run revoked the same certificate twice and got 200 both
 times. `routes/revocation.py` (H-4) justified that with *"RFC 8555 §7.6 says an
@@ -105,18 +105,18 @@ already-revoked cert returns 200 OK"*. It does not: §7.6 says the server
 'urn:ietf:params:acme:error:alreadyRevoked'"*. The comment is corrected here;
 the behaviour is **not** changed, because a client retrying a revocation that
 did succeed must not be told it failed (the 2026-08-24 Certify the Web finding
-is the precedent). Whether to conform is an owner decision, filed as WI-037.
+is the precedent). Whether to conform is an owner decision, filed as WI-047.
 
 ## Mutation matrix
 
-New: `tests/test_rfc8555_conformance_2026_10_01.py` (30; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases and an exact-match grandfathering test in round 2). One mutation at a
+New: `tests/test_rfc8555_conformance_2026_10_01.py` (31; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases and an exact-match grandfathering test in round 2, +1 CAS-lost expiry test in round 3). One mutation at a
 time, against the fixed tree:
 
 | Mutation | Result |
 |---|---|
 | pending finalize → `malformed` | 1 fails |
 | expired finalize (CAS-won branch) → `malformed` | 1 fails (`test_acme_server` expiry test) |
-| expired finalize (CAS-lost branch) | **no independent test** — the race branch needs a concurrent flip; same constructor as the CAS-won branch |
+| (round 3) expired finalize, CAS-lost branch (order already `invalid`) → `malformed` | 1 fails (new deterministic test; round 3 showed the branch is reachable without a race) |
 | outer unsupported-alg mapping removed | 5 fail |
 | inner keyChange mapping removed | 1 fails |
 | `jws.py` raises the parent exception | 6 fail |
@@ -124,7 +124,7 @@ time, against the fixed tree:
 | media type compared raw (no param/case handling) | 2 fail |
 | (round 1) duplicate-field refusal removed | 2 fail |
 | (round 2) comma refusal removed | 1 fails (`jose+json; charset=utf-8, text/plain`) |
-| kid floor not called | 3 fail |
+| kid floor not called | 4 fail |
 | grandfathering disabled | 1 fails |
 | (round 2) grandfathering made case-insensitive (store query + floor) | 1 fails |
 | `allow_weak_credentials` ignored | 3 fail |

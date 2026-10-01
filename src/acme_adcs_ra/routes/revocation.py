@@ -166,7 +166,7 @@ async def revoke_cert(
         # DELIBERATE DEVIATION, not RFC behaviour: RFC 8555 §7.6 says the server
         # "returns an error response with status code 400 (Bad Request) and
         # type ...:alreadyRevoked". The comment here used to claim the RFC
-        # required the 200 (corrected 2026-10-01; open decision WI-037). The
+        # said 200 (corrected 2026-10-01; open decision WI-047). The
         # 200 is kept because a client retrying a revocation that DID succeed
         # must not be told it failed -- Certify the Web already turned one
         # parse failure into a reported-failed revocation (2026-08-24, below).

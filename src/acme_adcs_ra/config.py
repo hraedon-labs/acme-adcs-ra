@@ -28,7 +28,7 @@ from acme_adcs_ra.policy import validate_dns_name
 # hand-typed ones.
 MIN_EAB_MAC_KEY_BYTES = 32
 MIN_ADMIN_TOKEN_CHARS = 32
-# EAB kid floor (WI-034). Threat model §4.B leans on kids being unguessable
+# EAB kid floor (WI-044). Threat model §4.B leans on kids being unguessable
 # against account-existence probing. No length rule can MEASURE entropy; this
 # is the necessary-not-sufficient floor for 128 random bits (22 base64url
 # characters). `scripts/eab.py` mints 32 hex characters (128 bits). Enforced
