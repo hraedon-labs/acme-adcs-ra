@@ -1674,6 +1674,14 @@ this session. `370 + 31 = 401`. Nothing in this run is unexplained.
 
 ---
 
+> **Store IDs (filed 2026-10-01, once regista writes were confirmed working):**
+> item 27 = **WI-031**, 28 = **WI-032**, 29 = **WI-033**, 30 = **WI-034**,
+> 31 = **WI-035**. The store is authoritative from here on; the entries below
+> are the 09-20 filing text as corrected by a 2026-10-01 factual-accuracy
+> review (gpt-5.6-sol), plus the stock-client evidence gathered that day.
+> Note the numbering trap: UNFILED item 27 is *not* store WI-027 (a retracted
+> 09-21 finding).
+
 ### 27. (bug, medium) — NEW 2026-09-20. **`keyChange` requires — and consumes — an inner-JWS nonce; RFC 8555 §7.3.5 says the inner JWS MUST omit `nonce`, so no conformant client can roll an account key**
 
 Found in a 2026-09-20 adversarial review pass, then verified first-hand.
@@ -1684,20 +1692,28 @@ parameter."* Replay protection for the inner object is supplied by the
 **outer** nonce, which this implementation already verifies and consumes —
 the inner check protects nothing that the outer check does not.
 
-acme-python/certbot, Posh-ACME, and Certify the Web all construct the inner
-JWS with `jwk` + `url` and no `nonce`, so every conformant client fails
-rollover with `badNonce` — at exactly the moment a key-compromise response
-needs the endpoint to work. This is the same root failure v1.11.0 recorded
+Posh-ACME (`Set-PAAccount -KeyRollover`) and Certify the Web (via its Anvil
+ACME library) construct the inner JWS with `jwk` + `url` and no `nonce`, so a
+conformant client fails rollover with `badNonce` — at exactly the moment a
+key-compromise response needs the endpoint to work. (acme-python/certbot is
+*not* in this list: it implements no key rollover at all.) This is the same root failure v1.11.0 recorded
 for revokeCert's `"cert"` vs `"certificate"`: `tests/hand_rolled_acme_client.py`
-speaks the server's dialect, so the deviation survives every green suite. A
-committed test (`tests/test_key_change.py`) asserts the current behaviour, so
-the fix flips an *asserted* behaviour, not just code — mutation-check the new
-tests, per the standing rule.
+speaks the server's dialect — its `key_change()` helper sends an inner nonce —
+so the deviation survives every green suite. `tests/test_key_change.py` does not
+assert the refusal itself; it exercises successful rollover only through that
+helper, so the helper must change with the route. Mutation-check the new tests,
+per the standing rule.
 
 **Fix.** Accept an absent inner `nonce` (per RFC); optionally reject a
-*present* one after the outer nonce is confirmed, matching Boulder semantics.
+*present* one after the outer nonce is confirmed (the RFC says MUST omit).
 Consume only the outer nonce. Re-prove against a stock client (item 31), not
 the in-repo harness.
+
+**2026-10-01 — reproduced with three stock clients.** Against a local RA at
+`ed1bab5` (fake in-memory CA, no real CA), lego 5.5.2 (`accounts
+keyrollover`), acme.sh 3.1.6 (`--update-account-key`) and Posh-ACME 4.34.0
+(`Set-PAAccount -KeyRollover`) all fail rollover with `badNonce: inner JWS
+protected header missing nonce`.
 
 ### 28. (bug, low) — NEW 2026-09-20. **`Replay-Nonce` is attached only to `new-nonce` responses; RFC 8555 §6.5 requires it on every successful POST response and on every badNonce error**
 
@@ -1707,24 +1723,38 @@ handler in `server.py` attaches no such header and `acme_errors.bad_nonce()`
 carries none, so **both** §6.5 MUSTs are unmet.
 
 Not an exploit — an availability/conformance defect in the anti-replay
-machinery. A conformant client that receives no `Replay-Nonce` must issue an
-extra unauthenticated `HEAD /acme/new-nonce` before every POST, doubling
-request volume and funnelling all clients through the shared nonce bucket
-(20/s, burst 100). A client stuck in a badNonce-retry loop — which the
-absence of a fresh nonce on the error itself prolongs — can therefore starve
-the bucket for *other* accounts' nonce fetches.
+machinery. A client holding no cached nonce from a previous response
+generally needs an extra unauthenticated new-nonce request before its next
+POST, funnelling all clients through the one application-wide nonce bucket
+(20/s, burst 100). Plausibly — not measured — a client stuck in a
+badNonce-retry loop, which the absence of a fresh nonce on the error itself
+prolongs, could starve that bucket for other accounts' nonce fetches.
 
 **Fix.** Mint one `store.create_nonce()` per response and attach
 `Replay-Nonce` on success and on badNonce errors (a small response helper or
 middleware on the ACME router; the mint must respect the same bucket).
 
+**2026-10-01 — severity understated; raised to medium (WI-032).** Against a
+local RA at `ed1bab5` with stock clients: **certbot 5.8.0 cannot even
+register** — acme-python raises `MissingNonce` on the first POST response
+without `Replay-Nonce` — and **Posh-ACME 4.34.0 fails every POST after
+new-account**, because it re-sends the nonce it already spent when a response
+carries none, and the badNonce it gets back carries no fresh nonce to recover
+with. lego and acme.sh fetch a fresh nonce instead and are unaffected. Related
+interop quirk found the same day: acme.sh retries a `badNonce` only when the
+problem *detail text* matches Boulder's wording ("JWS has an invalid
+anti-replay nonce"), not on the error type.
+
 ### 29. (conformance, low) — NEW 2026-09-20. **Two ACME error mappings deviate: finalize on a non-ready order returns `malformed`/400 instead of `orderNotReady`/403; an unsupported JWS algorithm surfaces as `unauthorized` instead of `badSignatureAlgorithm`**
 
 Both verified first-hand in the 2026-09-20 pass. (a) `routes/orders.py:280–283`
-raises `malformed` when `order.status != READY`; RFC 8555 §7.4 names
-`urn:ietf:params:acme:error:orderNotReady` with status 403. Clients that
-drive the state machine off the error type rather than polling will
-mis-handle this. (b) `jws.py`'s `UnsupportedAlgorithmError` is folded into
+raises `malformed` for an order that reaches the readiness check in a state
+other than `ready` — in practice `pending` (and `invalid`); `valid` and
+`processing` are special-cased earlier (`orders.py:260`, `:269`) and answered
+idempotently. RFC 8555 §7.4 names `urn:ietf:params:acme:error:orderNotReady`
+with status 403 for a finalize on a not-ready order. A client that drives the
+state machine off the error type rather than polling could mis-handle this
+(plausible; no specific client identified). (b) `jws.py`'s `UnsupportedAlgorithmError` is folded into
 `unauthorized(f"JWS verification failed: {exc}")` at `server_jws.py:171–174`;
 §6.2 requires `badSignatureAlgorithm` carrying an `algorithms` array. Pure
 conformance/diagnostics both — the security property behind each (state
@@ -1733,9 +1763,10 @@ error mappings.
 
 ### 30. (hardening, low) — NEW 2026-09-20. **Two claimed defences exist in prose, not in code: `application/jose+json` is never enforced, and the EAB kid has no entropy floor**
 
-(a) The threat model (§4.D, and the operations doc's replay discussion)
-justifies the CSRF posture partly with *"ACME POSTs are
-`application/jose+json`"* — but `server_jws._parse_jws_body` reads the raw
+(a) The threat model (§4.D) justifies the CSRF posture partly with *"ACME
+POSTs are `application/jose+json`"* (citing RFC 8555 §6.1; the requirement is
+in §6.2), and `docs/operations.md`'s reverse-proxy rate-limiting section leans
+on the same media type — but `server_jws._parse_jws_body` reads the raw
 body with no content-type check and no route returns 415. The property the
 argument leans on is documented but not code. Fix: one shared dependency
 rejecting non-`application/jose+json` POSTs to the ACME routes with 415.
@@ -1747,8 +1778,10 @@ load-bearing against account-existence probing (dummy-HMAC equalizer and the
 `account-creation-denied` audit are the compensating controls and are
 correctly implemented — they compensate for a *weak-kid deployment*, they do
 not prevent one). A 6-character kid passes config validation today. Fix: a
-kid length floor (e.g. ≥ 16 chars) under the same
-`allow_weak_credentials` gate and error text as the MAC-key floor.
+kid floor under the same `allow_weak_credentials` gate and error text as the
+MAC-key floor. Note that no length rule *measures* entropy: the enforceable
+form is a floor consistent with ≥ 128 random bits (≥ 22 base64url characters;
+`scripts/eab.py` mints 32 hex = 128 bits), stated as necessary-not-sufficient.
 
 ### 31. (harness, medium) — NEW 2026-09-20. **Run a stock-client interop pass over the whole ACME surface; the hand-rolled harness's conformance green is non-evidence**
 
@@ -1757,15 +1790,18 @@ lesson twice — v1.11.0's revokeCert dialect bug ("the harness and the test
 client both spoke the same non-standard dialect as the server") and the
 re-entry rule "prefer a client nobody here wrote for the next interop
 proof" — but it has not been operationalized: no client-independent interop
-proof of the full endpoint inventory exists, and items 27–29 all survived
-green suites for exactly the recorded reason.
+proof of the full endpoint inventory exists, and the hand-rolled client
+demonstrably masked items 27–28 (it sends an inner nonce, and fetches a fresh
+nonce whenever a response carries none).
 
 **Proposal.** Add a §-section to `docs/live-reproof-runbook.md` that points
 one maintained third-party client (acme.sh or Posh-ACME, in addition to the
 existing Certify the Web runs) at the lab RA and drives the full inventory
-end to end: new-account (EAB), new-order, challenge/authz reads, finalize,
-POST-as-GET of order and certificate, revokeCert, and **keyChange** — with
-the badNonce-retry path exercised deliberately (items 27, 28). Rule: any
+end to end: directory, new-nonce (HEAD and GET), new-account (EAB), account
+POST-as-GET, update and deactivation, the account's orders list, new-order,
+challenge/authz reads, finalize, POST-as-GET of order and certificate,
+revokeCert, and **keyChange** — with the badNonce-retry path exercised
+deliberately (items 27, 28). Rule: any
 behaviour where the stock client fails and the in-repo harness passes is a
 server finding by default, not a client bug, and earns a regression test
 written against the *client's* transcript.

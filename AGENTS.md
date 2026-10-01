@@ -99,16 +99,17 @@ Full write-up in `docs/security-review-2026-09-21.md`.
 2026-09-20 has lifted. New items go to the store, not `UNFILED-WORK-ITEMS.md`.
 
 **2026-09-20: review pass filed items 27–31 in `docs/UNFILED-WORK-ITEMS.md`.**
-A fresh adversarial pass over the ACME surface found no authorization bypass
-or replay path; what remains is RFC 8555 conformance debt the hand-rolled
-test client cannot see — most consequentially **item 27**: `keyChange`
-requires an inner-JWS nonce that §7.3.5 says MUST be omitted, so conformant
-clients (certbot, Posh-ACME, Certify the Web) fail key rollover. Items 28–29
-(`Replay-Nonce` headers, two error-type mappings) and 30 (two prose-only
-defences) are low. Item 31 is the structural lesson from v1.11.0 finally
-operationalized: a **stock-client interop pass** over the full endpoint
-inventory, folded into the live-reproof runbook. Work-item-store writes remain
-blocked, so all five are filed in `UNFILED-WORK-ITEMS.md` per the fallback.
+A fresh adversarial pass over the ACME surface reported no authorization
+bypass or replay path (a review conclusion, not a proof). What it did find is
+protocol debt the hand-rolled test client cannot see — most consequentially
+**item 27**: `keyChange` requires an inner-JWS nonce that §7.3.5 says MUST be
+omitted, so conformant clients (Posh-ACME, Certify the Web) fail key rollover.
+Items 28–29 (`Replay-Nonce` headers, two error-type mappings) are RFC 8555
+conformance; 30 is hardening (two prose-only defences). Item 31 proposes
+operationalizing the structural lesson from v1.11.0: a **stock-client interop
+pass** over the full endpoint inventory, to be folded into the live-reproof
+runbook. Work-item-store writes were blocked on 09-20, so all five were filed
+in `UNFILED-WORK-ITEMS.md` per the fallback.
 
 **2026-09-05 (later): WI-052 settled by measurement, and the watermark proven
 live.** The sampler's 399 samples over one complete publication cycle put the
