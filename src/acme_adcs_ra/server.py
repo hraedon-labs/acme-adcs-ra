@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from acme_adcs_ra.acme_errors import BAD_NONCE_TYPE, AcmeError
+from acme_adcs_ra.acme_errors import BAD_NONCE_TYPE, AcmeError, rate_limited
 from acme_adcs_ra.app_state import (
     ServerContext,
     _default_nonce_bucket,
@@ -70,8 +70,10 @@ class ReplayNonceMiddleware:
     exactly as ``new-nonce`` does, because an error may come from an unauthenticated
     peer: without that, "send a garbage signature with a valid nonce, receive a
     fresh nonce in the 401" would be an unbounded nonce chain around the
-    bucket. A dry bucket on an error simply omits the header (the client falls
-    back to ``new-nonce``, which then answers ``rateLimited``).
+    bucket. A dry bucket on an error simply omits the header (a SHOULD-level
+    nonce), except for ``badNonce``, where the nonce is a MUST: there the
+    exception handler answers ``rateLimited`` + ``Retry-After`` instead of a
+    nonce-less badNonce, and draws the token itself when the bucket allows.
 
     A mint that fails (unwritable store) is logged and the header omitted: the
     request's own effects have already committed, and turning a completed
@@ -112,7 +114,10 @@ class ReplayNonceMiddleware:
         status = int(message["status"])
         if status < 400:
             return consumed
-        if not (consumed or state.get("acme_error_type") == BAD_NONCE_TYPE):
+        if state.get("acme_nonce_prepaid"):
+            # badNonce: the handler already drew the bucket token for it.
+            return True
+        if not consumed:
             return False
         bucket = self.context.nonce_bucket
         return bucket is None or bucket.take()
@@ -259,6 +264,32 @@ def create_app(context: ServerContext) -> FastAPI:
         # Read by ReplayNonceMiddleware: a badNonce error is owed a nonce
         # even though no nonce was consumed (RFC 8555 §6.5).
         request.state.acme_error_type = exc.typ
+        if exc.typ == BAD_NONCE_TYPE:
+            # §6.5 says a badNonce MUST carry a fresh nonce, and the bucket is
+            # the only thing bounding unauthenticated nonce issuance. When it
+            # is dry the RA cannot honour both, so it does not send a badNonce
+            # at all: it answers what is actually true — rateLimited, with
+            # Retry-After — exactly as new-nonce would (Daybreak Blue, round
+            # 2, found the earlier "badNonce without a nonce" broke the MUST).
+            # Otherwise the token is taken HERE and the middleware mints
+            # without drawing a second one.
+            bucket = context.nonce_bucket
+            if bucket is not None and not bucket.take():
+                limited = rate_limited(
+                    f"nonce issuance is rate limited; retry after the delay "
+                    f"(the request also failed nonce validation: {exc.detail})",
+                    retry_after=bucket.retry_after_seconds(),
+                )
+                request.state.acme_error_type = limited.typ
+                return JSONResponse(
+                    status_code=limited.status,
+                    content=limited.to_problem(),
+                    headers={
+                        "Content-Type": "application/problem+json",
+                        **limited.headers,
+                    },
+                )
+            request.state.acme_nonce_prepaid = True
         return JSONResponse(
             status_code=exc.status,
             content=exc.to_problem(),

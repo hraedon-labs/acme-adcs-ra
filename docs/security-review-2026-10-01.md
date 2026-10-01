@@ -75,14 +75,16 @@ writer.
 | Response | Nonce | Source |
 |---|---|---|
 | 2xx/3xx to a POST that spent a nonce | always | **unbucketed** — a success implies a verified JWS (an account, or a new account past EAB); one spent, one minted, and the MUST holds even under nonce-flood pressure |
-| handled ACME error (`AcmeError`) to a POST that spent a nonce | if the bucket allows | bucket — the error may be an unauthenticated peer's |
-| `badNonce` error (nothing spent) | if the bucket allows | bucket |
+| any error response produced inside the app (an `AcmeError`, or a route's own 4xx such as the certificate route's 410) to a POST that spent a nonce | if the bucket allows | bucket — the error may be an unauthenticated peer's |
+| `badNonce` error (nothing spent) | always, or the error becomes `rateLimited` | bucket, drawn by the exception handler |
 | any other error, incl. an unhandled exception's 500 (produced outside this middleware) | none | — |
 
 Without the error rule, "valid nonce + garbage signature → 401 carrying a fresh
 nonce" would be an unbounded unauthenticated nonce chain around the bucket. A
-dry bucket on an error simply omits the header; the client falls back to
-`new-nonce`, which answers `rateLimited`.
+dry bucket on an ordinary error omits the header (a SHOULD). **For `badNonce`
+the nonce is a MUST**, so with the bucket dry the RA does not send a nonce-less
+`badNonce`; it answers `rateLimited` with `Retry-After` — what `new-nonce` would
+say — instead (Daybreak Blue, round 2, found the first version broke the MUST).
 
 **Accepted trade, stated plainly.** Before this change every POST needed a
 bucketed nonce, so the bucket incidentally capped the *global* POST rate at
@@ -104,7 +106,7 @@ type and status are unchanged.
 ## Tests and mutation matrix
 
 New: `tests/test_key_change_rfc8555.py` (7), `tests/test_replay_nonce_rfc8555.py`
-(12). Each mutation below was applied alone against the fixed tree and both
+(13). Each mutation below was applied alone against the fixed tree and both
 files re-run (re-measured after round 1; counts are of the 19 tests).
 
 | Mutation | Result |
@@ -121,6 +123,11 @@ files re-run (re-measured after round 1; counts are of the 19 tests).
 | `acme_error_type` never set | 1 fails |
 | errors that spent a nonce get none | 2 fail |
 | mint run on the event loop instead of the threadpool | 1 fails |
+| (round 2) dry-bucket badNonce not converted to `rateLimited` | 2 fail |
+| (round 2) badNonce token drawn twice (handler + middleware) | 1 fails |
+
+Rows above the round-2 rows were measured on 19 tests, before the dry-bucket
+test replaced its predecessor; the round-2 rows on 20.
 
 Round 1 (DeepSeek v4.1) reported 5/6 for the first row; that came from a
 hand-written approximation of the old route, not the `ed1bab5` file, and does

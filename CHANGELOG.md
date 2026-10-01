@@ -21,7 +21,9 @@ left certbot unable to register at all (`MissingNonce`) and Posh-ACME failing
 every request after new-account. Error responses draw their nonce from the
 existing nonce bucket, so an unauthenticated peer cannot use failed requests to
 mint nonces around the flood control; successful (verified) requests are
-always answered with one. `badNonce` details now lead with Boulder's wording,
+always answered with one. When the bucket is dry a would-be `badNonce` is
+answered `rateLimited` with `Retry-After` instead, since a badNonce without a
+nonce would break §6.5. `badNonce` details now lead with Boulder's wording,
 which acme.sh needs before it will retry. See `docs/security-review-2026-10-01.md`.
 
 ### Transport-orphaned certificates can be confirmed again (2026-09-05)

@@ -137,15 +137,27 @@ def test_bad_nonce_error_carries_a_retry_nonce(tmp_path: Path) -> None:
     assert retried.status_code == 201, retried.text
 
 
-def test_bad_nonce_with_a_dry_bucket_omits_the_header_and_still_answers(
-    tmp_path: Path,
-) -> None:
+def test_bad_nonce_with_a_dry_bucket_becomes_rate_limited(tmp_path: Path) -> None:
+    """§6.5: a badNonce MUST carry a fresh nonce. With the bucket dry the RA
+    cannot mint one without defeating the flood control, so it must not send a
+    badNonce at all: it answers rateLimited + Retry-After (Daybreak Blue r2)."""
     client, _store, _ctx, bucket, acme = _setup(tmp_path)
     bucket.open = False
-    replay = _post(client, "/acme/new-order", _new_order_body(acme, "not-a-real-nonce"))
-    assert replay.status_code == 400
-    assert replay.json()["type"] == "urn:ietf:params:acme:error:badNonce"
-    assert "Replay-Nonce" not in replay.headers
+    resp = _post(client, "/acme/new-order", _new_order_body(acme, "not-a-real-nonce"))
+    assert resp.status_code == 429
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:rateLimited"
+    assert resp.headers.get("Retry-After")
+    assert "Replay-Nonce" not in resp.headers
+
+
+def test_bad_nonce_draws_exactly_one_token(tmp_path: Path) -> None:
+    client, _store, _ctx, bucket, acme = _setup(tmp_path)
+    before = bucket.draws
+    resp = _post(client, "/acme/new-order", _new_order_body(acme, "not-a-real-nonce"))
+    assert resp.status_code == 400
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:badNonce"
+    assert resp.headers.get("Replay-Nonce")
+    assert bucket.draws == before + 1
 
 
 def test_unauthenticated_error_cannot_chain_nonces_around_the_bucket(
