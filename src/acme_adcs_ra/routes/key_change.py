@@ -175,6 +175,10 @@ async def key_change(
             if current is None:
                 raise AccountKeyStale("account disappeared before rollover")
             enforce_account_usable(ctx, current)
+            # Build the whole success response BEFORE the rotation commits,
+            # so nothing that can fail runs between the commit and the 200
+            # (Daybreak Blue round 6: serialization was still after it).
+            success = JSONResponse(content=_account_to_json(ctx, current))
             if jwk_thumbprint(json.loads(current.jwk_json)) != authenticated_thumbprint:
                 raise AccountKeyStale("account key changed before rollover")
             event = ctx.store.update_account_key_with_audit(
@@ -237,8 +241,8 @@ async def key_change(
     emit_audit_hook(ctx, event)
 
     # RFC 8555 §7.3.5 requires only 200 (OK). The body is the account object
-    # (status, contact, orders — none changed by a rollover), serialized from
-    # the record read under the lock, so nothing fallible runs after the
-    # rotation has committed: a post-commit read that failed would tell the
-    # client "failed" while its old key was already gone (Daybreak Blue r5).
-    return JSONResponse(content=_account_to_json(ctx, current))
+    # (status, contact, orders — none changed by a rollover), built above
+    # from the record read under the lock, before the commit: a post-commit
+    # failure would tell the client "failed" while its old key was already
+    # gone (Daybreak Blue rounds 5 and 6). emit_audit_hook swallows errors.
+    return success

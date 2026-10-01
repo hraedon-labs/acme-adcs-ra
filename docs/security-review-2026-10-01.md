@@ -131,10 +131,10 @@ earlier rows had drifted as the design moved.
 
 | Mutation | Result |
 |---|---|
-| keyChange route replaced by the `ed1bab5` file verbatim | 8 fail (every keyChange test that reaches the route) |
+| keyChange route replaced by the `ed1bab5` file verbatim | 9 fail (every keyChange test that reaches the route) |
 | present-nonce and inner-kid refusals both disabled | 2 fail |
 | inner-kid refusal alone disabled | 1 fails (the kid test sends `jwk` **and** `kid`) |
-| success body back to `{}` | 1 fails |
+| success body back to `{}` | 2 fail |
 | `ReplayNonceMiddleware` not registered | 7 fail |
 | errors that spent a nonce mint unbucketed | 2 fail |
 | successes drawn from the bucket | 2 fail |
