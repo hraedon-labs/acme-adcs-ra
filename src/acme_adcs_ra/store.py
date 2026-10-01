@@ -2600,6 +2600,100 @@ class Store:
             ).fetchall()
         return [self._certificate_from_row(row) for row in rows]
 
+    def list_certificate_chains(
+        self, *, limit: int = 1000
+    ) -> list[tuple[str, list[str]]]:
+        """Stored chains, newest first, as issuer material for recovery.
+
+        UNFILED item 25. A transport orphan has an empty ``chain_pem`` and can
+        therefore never be CRL-confirmed; the material that repairs it is
+        already here, because every successful issuance stored the chain the CA
+        returned over the same authenticated enrollment leg.
+
+        Rows with no chain are excluded — they are the population being
+        repaired, not a source for it — and the read is bounded, because this
+        runs on the confirmation path. ``[]`` is what an empty chain is
+        serialized as; ``''`` is defended against because a hand-repaired or
+        pre-migration row can hold it and ``json.loads('')`` raises.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, chain_pem FROM certificates "
+                "WHERE chain_pem IS NOT NULL AND chain_pem NOT IN ('[]', '') "
+                "ORDER BY issued_at DESC, id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        chains: list[tuple[str, list[str]]] = []
+        for row in rows:
+            try:
+                parsed = _load_json(row["chain_pem"])
+            except json.JSONDecodeError:
+                # One unreadable row must not deny the whole search; the next
+                # row may carry the same CA's certificate.
+                logging.getLogger(__name__).warning(
+                    "certificate %s has an unparseable chain_pem; skipping it "
+                    "as issuer material",
+                    row["id"],
+                )
+                continue
+            if isinstance(parsed, list) and parsed:
+                chains.append((row["id"], [str(entry) for entry in parsed]))
+        return chains
+
+    def attach_recovered_chain_with_audit(
+        self,
+        cert_id: str,
+        *,
+        chain_pem: Sequence[str],
+        event_type: str,
+        outcome: str,
+        account_id: str | None = None,
+        order_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> tuple[CertificateRecord | None, dict[str, Any] | None]:
+        """Fill in an EMPTY ``chain_pem``, with its audit event, atomically.
+
+        UNFILED item 25. Two properties are load-bearing:
+
+        * **It only ever fills an empty chain.** The UPDATE is compare-and-set
+          against ``'[]'``/``''``, so a chain the CA actually returned can never
+          be overwritten by recovered material, and two concurrent
+          confirmations for the same certificate cannot both write.
+        * **The chain and its provenance commit together.** A recovered chain
+          that cannot be traced back to what supplied it is not better than no
+          chain — it looks exactly like material the CA returned. Splitting the
+          two transactions would allow precisely that row to exist, which is
+          the same failure ``confirm_ca_revocation_with_audit`` was rewritten to
+          close.
+
+        Returns ``(record, event)``, or ``(None, None)`` when the row was not
+        updated: unknown id, or a chain that was already present — both of which
+        mean this caller has nothing to audit.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                "UPDATE certificates SET chain_pem = ? "
+                "WHERE id = ? AND chain_pem IN ('[]', '')",
+                (_dump_json(list(chain_pem)), cert_id),
+            )
+            if cursor.rowcount != 1:
+                return None, None
+            row = conn.execute(
+                "SELECT * FROM certificates WHERE id = ?", (cert_id,)
+            ).fetchone()
+            if row is None:  # pragma: no cover - the UPDATE just matched it
+                return None, None
+            event = self._record_audit_in_conn(
+                conn,
+                event_type=event_type,
+                account_id=account_id,
+                order_id=order_id,
+                outcome=outcome,
+                details=details,
+            )
+            return self._certificate_from_row(row), event
+
     def confirm_ca_revocation(self, serial_hex: str) -> bool:
         """Flip ca_crl_updated=1 for a revoked cert (WI-024 confirm callback).
 

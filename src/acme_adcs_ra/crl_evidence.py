@@ -124,6 +124,12 @@ class CrlEvidence:
     # no comparison was reached (the fetch failed before it, or the caller
     # passed no watermark and monotonicity was not being enforced).
     watermark_verdict: str | None = None
+    # True when the check could not start because the certificate's stored
+    # chain holds no issuer certificate (UNFILED item 25). Distinguished from
+    # every other "no evidence" because it is the one that can NEVER succeed on
+    # retry: an unreachable CDP is a bad afternoon, a missing issuer is a
+    # permanent wedge that needs a recovery action rather than another attempt.
+    issuer_missing: bool = False
 
     @property
     def verification(self) -> str:
@@ -796,6 +802,7 @@ def fetch_crl_evidence(
                 "could not locate the issuing CA certificate in the stored "
                 "chain, so the CRL signature cannot be verified"
             ),
+            issuer_missing=True,
         )
     if not crl.is_signature_valid(ca_cert.public_key()):  # type: ignore[arg-type]
         return CrlEvidence(

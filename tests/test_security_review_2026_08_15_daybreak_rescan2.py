@@ -308,6 +308,17 @@ class TestDenialCoalescing:
           revocation-confirm deferral likewise transition nothing. Unknown
           probed order ids are samples only and never coalescing keys.
 
+        Extended again 2026-09-05 with ``revocation-issuer-evidence-recovery``
+        (UNFILED item 25), and it passes the state-change test cleanly: the
+        event is written ONLY on the branch where recovery found nothing, so
+        by construction no chain was persisted and nothing transitioned. The
+        sync agent retries a blocked certificate on its interval forever, which
+        is the same benign unbounded growth as the denials above. Its SUCCESS
+        counterpart, ``revocation-issuer-evidence-recovered``, deliberately
+        stays out: that row is the provenance of a chain the RA wrote into the
+        store, and a compare-and-set means it can fire at most once per
+        certificate anyway.
+
         What must still never join: issuance, actual revocation, key rotation,
         and any admin call that changes state. ``certificate-issued`` is
         asserted below.
@@ -330,6 +341,7 @@ class TestDenialCoalescing:
             "admin-revocation-confirm-denied",
             "admin-revocation-confirm-deferred",
             "admin-list-pending-revocations",
+            "revocation-issuer-evidence-recovery",
         }
         assert "account-key-changed" not in COALESCED_EVENT_TYPES
         # State-changing admin counterparts remain individual.

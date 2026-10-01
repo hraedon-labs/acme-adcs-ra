@@ -180,6 +180,67 @@ Leave the CA and RA exactly as found. **Do not** revert the E-1 remediation (the
 enrollment gMSA's restricted primary group is a permanent hardening, not a test
 artifact).
 
+**Republish the CRL after the revocation loop, and PROVE it from the CDP.**
+Revoking at the CA and publishing a CRL are two operations, and only the first
+used to be written down here. Revoking without publishing leaves every
+certificate the session created still accepted by every relying party until the
+next scheduled publication — on a one-week `CRLPeriod`, for close to a week.
+
+That is not lab housekeeping. A certificate the CA considers revoked but that
+nobody can see as revoked is the gap this product's revocation evidence exists
+to make visible (the least-privilege path accepts it only until the next
+scheduled publication, and records it), and leaving the lab in it also means the
+*next* session's `require_crl_evidence` checks and the watermark's first-use
+baseline run against a CRL silently missing the previous session's revocations —
+which leaves cross-session revocation latency measurable only from CA timestamps
+and the external sampler, not from the RA's own evidence.
+
+It went unnoticed for rounds because the validation log asserted it. Entries for
+earlier rounds say "revoked … and the CRL republished"; at least one round did
+not. Same shape as the preserve step before it: the step was believed done
+because the sentence describing it was written, and nothing checked. So:
+
+1. run `certutil -config <CA> -CRL` after the revocation loop;
+2. **verify from the CDP, not from `certutil`'s exit code.**
+   `scripts/verify_crl_publication.py` is committed for this and takes the
+   controls with it:
+
+   ```bash
+   python scripts/verify_crl_publication.py \
+       --url <CDP-URL> \
+       --issuer <ISSUING-CA-CERT>   # e.g. from `certutil -config <CA> -ca.cert ca.cer`
+       --revoked <SERIAL> [--revoked <SERIAL> ...] \
+       --absent <UN-REVOKED-SERIAL> \
+       --prior-crl-number <NUMBER OBSERVED BEFORE THE REPUBLISH>
+   ```
+
+   `CRL-PUBLICATION-VERIFIED …` on stdout is the required evidence; its absence
+   means the teardown did not prove publication, whatever else it printed. The
+   three checks are there because absence proves nothing on its own — a CRL
+   lookup that matches nothing returns what a correct negative returns. The
+   revoked serials are the **positive control** (a broken lookup reads them as
+   absent and fails), `--absent` is the **negative control** (a lookup that
+   matches everything fails), and `--prior-crl-number` proves the document is one
+   published *after* the revocations rather than a cached pre-revocation CRL
+   (its number must be strictly greater). Both controls are required with
+   `--revoked`. Before any of that, the CRL must name `--issuer` as its issuer,
+   verify under its key, be a base CRL (not a delta, not indirect), be in force
+   (thisUpdate not in the future, nextUpdate not passed) and carry no critical
+   extension the script does not understand; `--issuer` must be one CA
+   certificate able to sign CRLs; a `removeFromCRL` entry does not count as
+   listed.
+   An unreachable CDP exits **2**, distinct from the **1** that means "checked,
+   and the serials are not there": a transport failure is no evidence either
+   way and must not be recorded as either verdict.
+
+**Interaction with the sampler, so a future session does not get this backwards.**
+A forced republication truncates the current publication cycle, which costs
+`scripts/sample_crl_age.py` that cycle as a clean natural observation. It
+**cannot** corrupt the served-age floor — every age a truncated cycle serves is
+a genuine served age, so it can never push the observed maximum above the true
+one; it can only fail to reach it. The trade is real
+and one-sided: do not skip the republish to protect the sampler.
+
 **Preserve the post-run store BEFORE restoring it.** Copy the live store — all
 three SQLite files, and only after the app pool is confirmed *stopped* — to a
 dated directory that the restore does not touch, and fail the teardown if that
