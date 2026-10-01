@@ -1632,13 +1632,17 @@ familiar shape: the step was believed done because the sentence describing it
 was written, and nothing checked.
 
 **Why this is not lab housekeeping.** A certificate the CA considers revoked
-but that no relying party can see as revoked is precisely the state this
-product's revocation story exists to prevent. Leaving the lab in it also means
+but that no relying party can see as revoked is the gap this product's
+revocation evidence (`crl_published`, CRL-verified confirmation) exists to make
+visible; the default least-privilege path accepts it only until the next
+scheduled publication, and the teardown left it unrecorded and unbounded by
+anything but `CRLPeriod`. Leaving the lab in it also means
 the *next* session's CRL-evidence checks — `require_crl_evidence`, and the
 monotonic watermark's first-use baseline — run against a CRL that is silently
-missing the prior session's revocations. And it makes any cross-session claim
-about revocation latency unmeasurable, in the same way item 22 made the CRL age
-unmeasurable: not un-measured, **un-measurABLE**.
+missing the prior session's revocations. And it makes a cross-session claim
+about revocation latency unmeasurable from the RA's own evidence — this
+interval was recovered only from CA timestamps and the external sampler — in
+the same way item 22 made the CRL age unmeasurable.
 
 **Fix.**
 
