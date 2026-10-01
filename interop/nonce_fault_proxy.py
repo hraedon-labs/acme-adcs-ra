@@ -10,7 +10,8 @@ badNonce-retry path (RFC 8555 §6.5), which no well-behaved run otherwise
 exercises. On every Nth JWS POST the proxy first sends the RA a copy of the
 request whose signature has been corrupted. The RA consumes the nonce before it
 verifies anything else, so the copy burns the nonce and is refused with 401 —
-no state changes. The client's genuine request is then forwarded and meets
+no resource state changes beyond nonce accounting. The client's genuine
+request is then forwarded and meets
 ``badNonce``; a conformant client retries with the nonce it was handed in that
 error response (or a fresh one) and the run must still succeed. The request
 immediately after an injection is never injected, so one retry always suffices.

@@ -131,9 +131,14 @@ are not secret-free. CI
 runs it on every PR (`.github/workflows/interop.yml`).
 
 Coverage gaps, stated rather than implied: certbot has no keyChange; the lego
-CLI has no account deactivation; after deactivation certbot and Posh-ACME
-refuse locally instead of sending a request, so only acme.sh proves the
-server-side refusal. acme.sh must be told `--extended-key-usage serverAuth`
+CLI has no account deactivation; after deactivation certbot (which deleted its
+local account and would try a fresh registration) and Posh-ACME (which refuses
+locally) send no request with the old key, so only acme.sh proves the
+server-side refusal. Each run also asserts, per client, that every step the
+scenario declares reported, that the container exited 0, and (when injecting)
+that at least one burned nonce reached that client and was refused with 401.
+"No real CA" is exact; "offline" is not — the runner pulls the pinned images
+and Posh-ACME from PSGallery. acme.sh must be told `--extended-key-usage serverAuth`
 (its default CSR also asks for clientAuth, which the RA refuses by design).
 
 **Then on the lab RA**, for the candidate artifact: point one maintained

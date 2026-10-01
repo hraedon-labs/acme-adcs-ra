@@ -46,6 +46,11 @@ PWSH_IMAGE="${PWSH_IMAGE:-mcr.microsoft.com/powershell:7.5-ubuntu-24.04@sha256:0
 CLIENT_TIMEOUT="${CLIENT_TIMEOUT:-600}"   # seconds per client container
 POSH_ACME_VERSION="${POSH_ACME_VERSION:-4.34.0}"
 
+# A reused work dir would let a client "pass" a step because an earlier run's
+# certificate or account already satisfied it. Refuse anything but empty.
+if [ -d "$WORK" ] && [ -n "$(ls -A "$WORK" 2>/dev/null)" ]; then
+    echo "INTEROP_WORK $WORK is not empty; use a fresh directory"; exit 2
+fi
 mkdir -p "$WORK"/{pki,out,data}
 chmod 0777 "$WORK"/out "$WORK"/data
 echo "interop work dir: $WORK"
@@ -130,14 +135,51 @@ run_client() {
     mkdir -p "$WORK/w-$c"; chmod 0777 "$WORK/w-$c"
     local args=()
     [ "$entry" = pwsh ] && args=(-NoProfile -File)
+    local rc=0
     timeout --kill-after=10 "$CLIENT_TIMEOUT" \
     docker run --rm --name "$RUN_ID-$c" --network "$NET" --entrypoint "$entry" \
         -v "$REPO/interop:/harness:ro" -v "$WORK/pki:/pki:ro" \
         -v "$WORK/w-$c:/w" -v "$WORK/out:/out" \
         -e DIRECTORY_URL="$DIRECTORY_URL" -e EAB_KID="${KID[$c]}" -e EAB_HMAC="${HMAC[$c]}" \
         -e POSH_ACME_VERSION="$POSH_ACME_VERSION" \
-        "$image" "${args[@]}" "$script" >"$WORK/out/$c.log" 2>&1 || true
-    grep '^RESULT ' "$WORK/out/$c.log" || echo "RESULT $c harness FAIL (no results; see $WORK/out/$c.log)"
+        "$image" "${args[@]}" "$script" >"$WORK/out/$c.log" 2>&1 || rc=$?
+    grep '^RESULT ' "$WORK/out/$c.log" || true
+    # The scenario script is the inventory: every step it declares must have
+    # reported, and the container must have exited 0. A client that prints one
+    # PASS and then crashes is a FAIL, not a short green run.
+    local s
+    for s in $(expected_steps "$REPO/interop/clients/$(basename "$script")"); do
+        grep -Eq "^RESULT [^ ]+ $s (PASS|FAIL|SKIP)" "$WORK/out/$c.log" \
+            || echo "RESULT $c $s FAIL (step never reported; see $WORK/out/$c.log)"
+    done
+    [ "$rc" -eq 0 ] || echo "RESULT $c container FAIL (exit $rc; see $WORK/out/$c.log)"
+    # Injection coverage, attributed per client (clients run one at a time):
+    # each must have met at least one burned nonce, and every burn must have
+    # been refused by the RA (401) -- otherwise the retry path was not proven.
+    if [ "$INJECT" -gt 0 ]; then
+        docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1 || true
+        local total burns bad
+        total=$(grep -c '^INJECT ' "$WORK/out/proxy.log" || true)
+        # run_client runs in a pipeline subshell, so the running total lives
+        # in a file, not a variable.
+        local before; before=$(cat "$WORK/out/.injected" 2>/dev/null || echo 0)
+        burns=$((total - before)); echo "$total" >"$WORK/out/.injected"
+        bad=$(grep '^INJECT ' "$WORK/out/proxy.log" | tail -n "$burns" | grep -vc -- '-> 401$' || true)
+        if [ "$burns" -lt 1 ]; then
+            echo "RESULT $c badnonce-coverage FAIL (no injected badNonce reached this client)"
+        elif [ "$bad" -gt 0 ]; then
+            echo "RESULT $c badnonce-coverage FAIL ($bad burned request(s) not refused with 401)"
+        else
+            echo "RESULT $c badnonce-coverage PASS ($burns injected, each burned with 401; the steps above passed through them)"
+        fi
+    fi
+}
+
+expected_steps() {
+    case "$1" in
+        *.ps1) sed -nE "s/^Step '([a-z0-9-]+)'.*/\1/p" "$1" ;;
+        *)     sed -nE 's/^(step|refused|skip) ([a-z0-9-]+) .*/\2/p' "$1" ;;
+    esac
 }
 
 : >"$WORK/out/results.txt"
