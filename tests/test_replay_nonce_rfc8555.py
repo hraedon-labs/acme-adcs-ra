@@ -262,3 +262,22 @@ def test_the_mint_runs_off_the_event_loop(
     assert resp.status_code == 201
     assert resp.headers.get("Replay-Nonce")
     assert on_loop == [False]
+
+
+def test_bad_nonce_whose_mint_fails_becomes_rate_limited(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DeepSeek round 3: the bucket is not the only way the mint can fail. A
+    badNonce whose nonce cannot be minted (writer lock past the busy timeout,
+    read-only store) must not go out nonce-less either."""
+    client, store, _ctx, _bucket, acme = _setup(tmp_path)
+
+    def unwritable() -> str:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "create_nonce", unwritable)
+    resp = _post(client, "/acme/new-order", _new_order_body(acme, "not-a-real-nonce"))
+    assert resp.status_code == 429, resp.text
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:rateLimited"
+    assert resp.headers.get("Retry-After")
+    assert "Replay-Nonce" not in resp.headers

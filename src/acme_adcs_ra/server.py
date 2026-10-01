@@ -56,10 +56,13 @@ class ReplayNonceMiddleware:
     even register, and Posh-ACME re-sent its spent nonce and failed every POST
     after new-account.
 
-    The decision is driven by two request-state flags, never by path:
+    The decision is driven by one request-state flag, never by path:
     ``acme_nonce_consumed`` (set by ``server_jws._parse_jws_header`` once a
-    nonce has been spent) and ``acme_error_type`` (set by the ``AcmeError``
-    handler). Non-JWS routes (directory, admin) set neither and are untouched.
+    nonce has been spent). Non-JWS routes (directory, admin) never set it and
+    are untouched. ``badNonce`` — the one error owed a nonce although none was
+    spent — is minted by the ``AcmeError`` handler itself, which also decides
+    what to say when it cannot mint one; the middleware leaves any response
+    that already carries ``Replay-Nonce`` alone.
 
     **Which mints may bypass the nonce bucket.** The bucket exists so that an
     unauthenticated flood cannot hold SQLite's single writer (directory.py). A
@@ -71,9 +74,9 @@ class ReplayNonceMiddleware:
     peer: without that, "send a garbage signature with a valid nonce, receive a
     fresh nonce in the 401" would be an unbounded nonce chain around the
     bucket. A dry bucket on an error simply omits the header (a SHOULD-level
-    nonce), except for ``badNonce``, where the nonce is a MUST: there the
-    exception handler answers ``rateLimited`` + ``Retry-After`` instead of a
-    nonce-less badNonce, and draws the token itself when the bucket allows.
+    nonce), except for ``badNonce``, where the nonce is a MUST — see the
+    exception handler, which answers ``rateLimited`` + ``Retry-After`` rather
+    than send a nonce-less badNonce.
 
     A mint that fails (unwritable store) is logged and the header omitted: the
     request's own effects have already committed, and turning a completed
@@ -114,9 +117,6 @@ class ReplayNonceMiddleware:
         status = int(message["status"])
         if status < 400:
             return consumed
-        if state.get("acme_nonce_prepaid"):
-            # badNonce: the handler already drew the bucket token for it.
-            return True
         if not consumed:
             return False
         bucket = self.context.nonce_bucket
@@ -259,42 +259,48 @@ def create_app(context: ServerContext) -> FastAPI:
     )
     app.state.context = context
 
+    def _problem(err: AcmeError, extra_headers: dict[str, str] | None = None) -> JSONResponse:
+        return JSONResponse(
+            status_code=err.status,
+            content=err.to_problem(),
+            headers={
+                "Content-Type": "application/problem+json",
+                **err.headers,
+                **(extra_headers or {}),
+            },
+        )
+
     @app.exception_handler(AcmeError)
     async def acme_exception_handler(request: Request, exc: AcmeError) -> JSONResponse:
-        # Read by ReplayNonceMiddleware: a badNonce error is owed a nonce
-        # even though no nonce was consumed (RFC 8555 §6.5).
-        request.state.acme_error_type = exc.typ
-        if exc.typ == BAD_NONCE_TYPE:
-            # §6.5 says a badNonce MUST carry a fresh nonce, and the bucket is
-            # the only thing bounding unauthenticated nonce issuance. When it
-            # is dry the RA cannot honour both, so it does not send a badNonce
-            # at all: it answers what is actually true — rateLimited, with
-            # Retry-After — exactly as new-nonce would (Daybreak Blue, round
-            # 2, found the earlier "badNonce without a nonce" broke the MUST).
-            # Otherwise the token is taken HERE and the middleware mints
-            # without drawing a second one.
-            bucket = context.nonce_bucket
-            if bucket is not None and not bucket.take():
-                limited = rate_limited(
-                    f"nonce issuance is rate limited; retry after the delay "
-                    f"(the request also failed nonce validation: {exc.detail})",
-                    retry_after=bucket.retry_after_seconds(),
+        if exc.typ != BAD_NONCE_TYPE:
+            return _problem(exc)
+        # RFC 8555 §6.5: a badNonce MUST carry a fresh nonce. The decision and
+        # the mint both happen HERE, so "every badNonce has a nonce" holds by
+        # construction: either this response carries one, or it is not a
+        # badNonce. The token is drawn from the nonce bucket (the only bound
+        # on unauthenticated nonce issuance); if the bucket is dry, or the mint
+        # itself fails (e.g. the writer lock outlasting the busy timeout under
+        # a garbage-nonce flood), the RA answers what is true — rateLimited
+        # with Retry-After, as new-nonce would — instead of a nonce-less
+        # badNonce. Daybreak Blue (round 2) found the dry-bucket case and
+        # DeepSeek (round 3) the failed-mint case.
+        bucket = context.nonce_bucket
+        nonce: str | None = None
+        if bucket is None or bucket.take():
+            try:
+                nonce = await run_in_threadpool(context.store.create_nonce)
+            except (sqlite3.Error, OSError):
+                logger.exception("could not mint a Replay-Nonce for a badNonce error")
+        if nonce is None:
+            retry = bucket.retry_after_seconds() if bucket is not None else 1
+            return _problem(
+                rate_limited(
+                    "nonce issuance is temporarily unavailable; retry after the "
+                    f"delay (the request also failed nonce validation: {exc.detail})",
+                    retry_after=retry,
                 )
-                request.state.acme_error_type = limited.typ
-                return JSONResponse(
-                    status_code=limited.status,
-                    content=limited.to_problem(),
-                    headers={
-                        "Content-Type": "application/problem+json",
-                        **limited.headers,
-                    },
-                )
-            request.state.acme_nonce_prepaid = True
-        return JSONResponse(
-            status_code=exc.status,
-            content=exc.to_problem(),
-            headers={"Content-Type": "application/problem+json", **exc.headers},
-        )
+            )
+        return _problem(exc, {"Replay-Nonce": nonce})
 
     app.include_router(acme_router)
     app.include_router(admin_router)

@@ -62,11 +62,13 @@ spent when a response carries none, and the `badNonce` it gets back offered no
 nonce to recover with). lego and acme.sh fetch a fresh nonce and were
 unaffected.
 
-**Fix: `ReplayNonceMiddleware` (server.py)**, a pure ASGI wrapper driven by two
-request-state flags rather than by path: `acme_nonce_consumed` (set by
-`server_jws._parse_jws_header` once a nonce is spent) and `acme_error_type` (set
-by the `AcmeError` handler). Directory and admin routes set neither and are
-untouched; `new-nonce` keeps its single header.
+**Fix: `ReplayNonceMiddleware` (server.py)**, a pure ASGI wrapper driven by one
+request-state flag rather than by path: `acme_nonce_consumed` (set by
+`server_jws._parse_jws_header` once a nonce is spent). Directory and admin
+routes never set it and are untouched; `new-nonce` keeps its single header.
+`badNonce` — owed a nonce although none was spent — is minted by the `AcmeError`
+handler itself (below), and the middleware leaves a response that already
+carries `Replay-Nonce` alone.
 
 **The bucket rule is the security-relevant part.** The nonce bucket (20/s,
 burst 100) exists so an unauthenticated flood cannot hold SQLite's single
@@ -76,15 +78,18 @@ writer.
 |---|---|---|
 | 2xx/3xx to a POST that spent a nonce | always | **unbucketed** — a success implies a verified JWS (an account, or a new account past EAB); one spent, one minted, and the MUST holds even under nonce-flood pressure |
 | any error response produced inside the app (an `AcmeError`, or a route's own 4xx such as the certificate route's 410) to a POST that spent a nonce | if the bucket allows | bucket — the error may be an unauthenticated peer's |
-| `badNonce` error (nothing spent) | always, or the error becomes `rateLimited` | bucket, drawn by the exception handler |
+| `badNonce` error (nothing spent) | always — or the response becomes `rateLimited` | bucket, drawn and minted by the exception handler |
 | any other error, incl. an unhandled exception's 500 (produced outside this middleware) | none | — |
 
 Without the error rule, "valid nonce + garbage signature → 401 carrying a fresh
 nonce" would be an unbounded unauthenticated nonce chain around the bucket. A
 dry bucket on an ordinary error omits the header (a SHOULD). **For `badNonce`
-the nonce is a MUST**, so with the bucket dry the RA does not send a nonce-less
-`badNonce`; it answers `rateLimited` with `Retry-After` — what `new-nonce` would
-say — instead (Daybreak Blue, round 2, found the first version broke the MUST).
+the nonce is a MUST**, so the handler draws the token *and* mints the nonce at
+the point it builds the response: if either fails (dry bucket, or a mint that
+errors — e.g. the writer lock outlasting the 5 s busy timeout under a
+garbage-nonce flood), the RA does not send a nonce-less `badNonce`; it answers
+`rateLimited` with `Retry-After`, what `new-nonce` would say. Daybreak Blue
+(round 2) found the dry-bucket case; DeepSeek (round 3) the failed-mint case.
 
 **Accepted trade, stated plainly.** Before this change every POST needed a
 bucketed nonce, so the bucket incidentally capped the *global* POST rate at
@@ -106,8 +111,9 @@ type and status are unchanged.
 ## Tests and mutation matrix
 
 New: `tests/test_key_change_rfc8555.py` (7), `tests/test_replay_nonce_rfc8555.py`
-(13). Each mutation below was applied alone against the fixed tree and both
-files re-run (re-measured after round 1; counts are of the 19 tests).
+(14). Each mutation below was applied alone against the final tree and both
+files (21 tests) re-run; the whole matrix was re-measured after round 3, since
+earlier rows had drifted as the design moved.
 
 | Mutation | Result |
 |---|---|
@@ -115,23 +121,20 @@ files re-run (re-measured after round 1; counts are of the 19 tests).
 | present-nonce and inner-kid refusals both disabled | 2 fail |
 | inner-kid refusal alone disabled | 1 fails (the kid test sends `jwk` **and** `kid`) |
 | success body back to `{}` | 1 fails |
-| `ReplayNonceMiddleware` not registered | 8 fail |
-| handled errors mint unbucketed | 3 fail |
+| `ReplayNonceMiddleware` not registered | 7 fail |
+| errors that spent a nonce mint unbucketed | 2 fail |
 | successes drawn from the bucket | 2 fail |
 | badNonce detail prefix removed | 1 fails |
-| mint guard removed (`create_nonce` raises) | 1 fails (a completed POST becomes a 500) |
-| `acme_error_type` never set | 1 fails |
+| middleware mint guard removed (a completed POST becomes a 500) | 1 fails |
 | errors that spent a nonce get none | 2 fail |
-| mint run on the event loop instead of the threadpool | 1 fails |
-| (round 2) dry-bucket badNonce not converted to `rateLimited` | 2 fail |
-| (round 2) badNonce token drawn twice (handler + middleware) | 1 fails |
+| middleware mint on the event loop | 1 fails |
+| badNonce mint not drawn from the bucket | 2 fail |
+| badNonce failed mint not converted to `rateLimited` | 1 fails |
+| badNonce sent without the nonce it minted | 2 fail |
+| nonce-less badNonce allowed (no `rateLimited` conversion) | 2 fail |
 
-Rows above the round-2 rows were measured on 19 tests, before the dry-bucket
-test replaced its predecessor; the round-2 rows on 20.
-
-Round 1 (DeepSeek v4.1) reported 5/6 for the first row; that came from a
-hand-written approximation of the old route, not the `ed1bab5` file, and does
-not reproduce against the real one.
+Round 1 (DeepSeek) reported 5/6 for the first row from a hand-written
+approximation of the old route; it does not reproduce against the real file.
 
 ## Not covered here
 
