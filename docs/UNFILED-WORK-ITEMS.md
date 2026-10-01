@@ -1675,8 +1675,10 @@ this session. `370 + 31 = 401`. Nothing in this run is unexplained.
 ---
 
 > **Store IDs (filed 2026-10-01, once regista writes were confirmed working):**
-> item 27 = **WI-031**, 28 = **WI-032**, 29 = **WI-033**, 30 = **WI-034**,
-> 31 = **WI-035**. The store is authoritative from here on; the entries below
+> item 27 = **WI-041**, 28 = **WI-042**, 29 = **WI-043**, 30 = **WI-044**,
+> 31 = **WI-045**. (First filed as WI-031..035, which collide with plan-document
+> IDs WI-021..040 — AGENTS.md says new items take identifiers ≥ WI-040 — so
+> they were refiled under 041..045 the same day and the 031..035 rows deleted.) The store is authoritative from here on; the entries below
 > are the 09-20 filing text as corrected by a 2026-10-01 factual-accuracy
 > review (gpt-5.6-sol), plus the stock-client evidence gathered that day.
 > Note the numbering trap: UNFILED item 27 is *not* store WI-027 (a retracted
@@ -1734,7 +1736,7 @@ prolongs, could starve that bucket for other accounts' nonce fetches.
 `Replay-Nonce` on success and on badNonce errors (a small response helper or
 middleware on the ACME router; the mint must respect the same bucket).
 
-**2026-10-01 — severity understated; raised to medium (WI-032).** Against a
+**2026-10-01 — severity understated; raised to medium (WI-042).** Against a
 local RA at `ed1bab5` with stock clients: **certbot 5.8.0 cannot even
 register** — acme-python raises `MissingNonce` on the first POST response
 without `Replay-Nonce` — and **Posh-ACME 4.34.0 fails every POST after

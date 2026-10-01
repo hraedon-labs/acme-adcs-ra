@@ -1,13 +1,13 @@
-# 2026-10-01 — RFC 8555 nonce conformance: keyChange (WI-031) and Replay-Nonce (WI-032)
+# 2026-10-01 — RFC 8555 nonce conformance: keyChange (WI-041) and Replay-Nonce (WI-042)
 
 Two protocol defects filed on 2026-09-20 as UNFILED items 27 and 28 (store
-WI-031, WI-032). Both were invisible to the suite for the reason AGENTS.md has
+WI-041, WI-042). Both were invisible to the suite for the reason AGENTS.md has
 recorded twice: `tests/hand_rolled_acme_client.py` spoke the server's dialect.
 Both were then **reproduced with stock clients** against a local RA at
 `ed1bab5` with a throwaway in-memory CA (the interop harness of item 31,
-WI-035; no real or lab CA was involved).
+WI-045; no real or lab CA was involved).
 
-## WI-031 — keyChange demanded an inner-JWS nonce (medium)
+## WI-041 — keyChange demanded an inner-JWS nonce (medium)
 
 RFC 8555 §7.3.5: *"The inner JWS MUST omit the 'nonce' header parameter."*
 `routes/key_change.py` raised `badNonce` when it was absent and consumed it
@@ -48,7 +48,7 @@ any key anyway; the target key B was the account's own key. It is the
 behaviour RFC 8555 prescribes, and a test now pins it so the trade stays
 visible.
 
-## WI-032 — Replay-Nonce only on new-nonce (raised low → medium)
+## WI-042 — Replay-Nonce only on new-nonce (raised low → medium)
 
 RFC 8555 §6.5: the server MUST send `Replay-Nonce` *"in every successful
 response to a POST request"*, and a `badNonce` error MUST carry a fresh nonce
@@ -139,5 +139,5 @@ approximation of the old route; it does not reproduce against the real file.
 ## Not covered here
 
 Stock-client proof of the *fixed* tree is recorded in the PR (interop harness,
-WI-035). Items 29–30 (WI-033, WI-034) are a separate PR. Live IIS/ADCS is
+WI-045). Items 29–30 (WI-043, WI-044) are a separate PR. Live IIS/ADCS is
 untouched; nothing here changes the enrollment or revocation legs.
