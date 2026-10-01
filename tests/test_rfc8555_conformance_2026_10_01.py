@@ -230,6 +230,32 @@ class _HeaderOverride:
         return self._client.head(url, **kwargs)
 
 
+@pytest.mark.parametrize(
+    "fields",
+    [
+        [("content-type", "application/jose+json"), ("content-type", "text/plain")],
+        [("content-type", "text/plain"), ("content-type", "application/jose+json")],
+        [("content-type", "application/jose+json"), ("content-type", "application/jose+json")],
+    ],
+)
+def test_duplicate_content_type_fields_are_refused_in_either_order(
+    tmp_path: Path, fields: list[tuple[str, str]]
+) -> None:
+    client, _store, acme = _setup(tmp_path)
+    from .hand_rolled_acme_client import sign_jws
+
+    url = f"{BASE}/acme/new-order"
+    body = json.dumps(
+        sign_jws(
+            {"identifiers": [{"type": "dns", "value": SAN}]},
+            acme.account_key,
+            {"alg": "ES256", "kid": acme.account_url, "nonce": _fresh(client), "url": url},
+        )
+    )
+    resp = client.post("/acme/new-order", content=body, headers=fields)
+    assert resp.status_code == 415, resp.text
+
+
 def test_admin_json_endpoints_are_not_subject_to_the_jose_rule(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     app, _store, _ctx = _make_app(config)

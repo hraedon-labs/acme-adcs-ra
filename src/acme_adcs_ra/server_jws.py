@@ -129,7 +129,17 @@ def _require_jose_json(request: Request) -> None:
     per RFC 9110 §8.3.1. The threat model's CSRF argument leaned on this
     property while the code did not enforce it (WI-034).
     """
-    raw = request.headers.get("content-type", "")
+    # Exactly one Content-Type field. Starlette's .get() returns the FIRST of
+    # duplicates, so "jose+json, then text/plain" passed while the reverse was
+    # refused — a parser differential with whatever proxy sits in front
+    # (Daybreak Blue, round 1). A singleton field sent twice is not a request
+    # this RA has to interpret.
+    fields = request.headers.getlist("content-type")
+    if len(fields) > 1:
+        raise unsupported_media_type(
+            f"ACME requests must carry exactly one Content-Type field; got {len(fields)}"
+        )
+    raw = fields[0] if fields else ""
     media_type = raw.split(";", 1)[0].strip().lower()
     if media_type != JOSE_JSON:
         raise unsupported_media_type(

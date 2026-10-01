@@ -41,8 +41,13 @@ The threat model's CSRF argument relied on this property while the code never
 checked it. `_require_jose_json` runs in `_parse_jws_body`, i.e. on every JWS
 route and **before the body is read and before any nonce is spent**, so a
 wrong-media-type request costs nothing and burns nothing (tested: the same
-signed request, resent with the right type, succeeds). Parameters are ignored
-and the comparison is case-insensitive (RFC 9110 §8.3.1). The problem type is
+signed request, resent with the right type, succeeds). Media-type parameters
+(`; charset=utf-8`) do not affect the match and the type compares
+case-insensitively (RFC 9110 §8.3.1); the field must appear **exactly once** —
+duplicates are refused in either order (Daybreak Blue, round 1, found the
+first-of-two was trusted) — and a comma-joined list is not a media type. A
+**missing** Content-Type is also 415: §6.2's wording is "if a request does not
+meet this requirement", and a request without the field does not. The problem type is
 `malformed` — RFC 8555 registers none for 415. Admin JSON endpoints do not use
 `_parse_jws_body` and are unaffected. All four stock clients send the right
 type (harness transcripts).
@@ -65,8 +70,12 @@ retention floor):
 | with ≥ 1 account, any status | **grandfathered**: start, WARNING on every startup naming the kid and the rotate command |
 | `allow_weak_credentials=true` | floor skipped (existing lab/CI gate) |
 
-Grandfathering is per kid: one short kid in use does not excuse a second new
-one. **I could not check the lab's actual kids** (lab estate untouched by
+Grandfathering is per kid and **exact-match**: one short kid in use does not
+excuse a second new one, and re-declaring a grandfathered kid with different
+case or whitespace is a new kid (refused) — consistent with every other kid
+lookup in the RA, which is also exact. A store error during the check aborts
+startup with the store's own exception (fails closed; DeepSeek round 1 notes
+the message is the raw one, not the floor's). **I could not check the lab's actual kids** (lab estate untouched by
 instruction); if any lab kid is short it will be grandfathered, not refused,
 provided it already has an account.
 
