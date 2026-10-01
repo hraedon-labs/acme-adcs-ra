@@ -84,7 +84,8 @@ class ReplayNonceMiddleware:
     The mint is a SQLite write, so it runs in the threadpool rather than on the
     event loop: under writer contention it can wait out the 5 s busy timeout,
     and it must not stall every other request while it does (Daybreak Blue,
-    round 1).
+    round 1). So do the badNonce handler mint and, since round 4, the
+    new-nonce route (routes/directory.py).
     """
 
     def __init__(self, app: ASGIApp, context: ServerContext) -> None:
@@ -292,6 +293,8 @@ def create_app(context: ServerContext) -> FastAPI:
             except (sqlite3.Error, OSError):
                 logger.exception("could not mint a Replay-Nonce for a badNonce error")
         if nonce is None:
+            # Reached with a bucket (dry, or drawn and then the mint failed);
+            # with buckets disabled only a failed mint gets here.
             retry = bucket.retry_after_seconds() if bucket is not None else 1
             return _problem(
                 rate_limited(

@@ -38,7 +38,9 @@ also omits the inner nonce, per its source; not run here.
 JWS could carry `{"header": {"nonce": …}}` past the refusal above. RFC 8555
 §6.2 says the unprotected header MUST NOT be used and a JWS MUST NOT carry
 multiple signatures; `header` and `signatures` are now refused (`malformed`)
-on the outer JWS, the keyChange inner JWS, and the EAB JWS.
+on the outer JWS, the keyChange inner JWS, and the EAB JWS (each leg has its
+own test). The structural check runs before the nonce is spent, like the other
+`malformed` shape checks, so a client can correct it without a new nonce.
 
 **Replay analysis.** The whole request is single-use (the outer nonce); the
 inner JWS binds `url` (equal to the outer `url`) and `account` (equal to the
@@ -117,14 +119,14 @@ type and status are unchanged.
 
 ## Tests and mutation matrix
 
-New: `tests/test_key_change_rfc8555.py` (10), `tests/test_replay_nonce_rfc8555.py`
-(14). Each mutation below was applied alone against the final tree and both
-files (21 tests; 24 after round 3's unprotected-header tests) re-run; the whole matrix was re-measured after round 3, since
+New: `tests/test_key_change_rfc8555.py` (12), `tests/test_replay_nonce_rfc8555.py`
+(16). Each mutation below was applied alone against the final tree and both
+files (28 tests at round 4) re-run; the whole matrix was re-measured after round 3, since
 earlier rows had drifted as the design moved.
 
 | Mutation | Result |
 |---|---|
-| keyChange route replaced by the `ed1bab5` file verbatim | 7 fail (every keyChange test) |
+| keyChange route replaced by the `ed1bab5` file verbatim | 8 fail (every keyChange test that reaches the route) |
 | present-nonce and inner-kid refusals both disabled | 2 fail |
 | inner-kid refusal alone disabled | 1 fails (the kid test sends `jwk` **and** `kid`) |
 | success body back to `{}` | 1 fails |
@@ -140,6 +142,9 @@ earlier rows had drifted as the design moved.
 | badNonce sent without the nonce it minted | 2 fail |
 | nonce-less badNonce allowed (no `rateLimited` conversion) | 2 fail |
 | (round 3) unprotected `header` member no longer refused | 2 fail (inner and outer) |
+| (round 4) EAB leg of the §6.2 refusal removed | 2 fail (`header`, `signatures`) |
+| (round 4) badNonce handler mint run on the event loop | 1 fails |
+| (round 4) new-nonce route mint run on the event loop | 1 fails |
 
 Round 1 (DeepSeek) reported 5/6 for the first row from a hand-written
 approximation of the old route; it does not reproduce against the real file.

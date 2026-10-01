@@ -281,3 +281,32 @@ def test_bad_nonce_whose_mint_fails_becomes_rate_limited(
     assert resp.json()["type"] == "urn:ietf:params:acme:error:rateLimited"
     assert resp.headers.get("Retry-After")
     assert "Replay-Nonce" not in resp.headers
+
+
+@pytest.mark.parametrize("path", ["badnonce", "new-nonce"])
+def test_other_mint_sites_run_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    """DeepSeek round 4: the badNonce handler's mint and the new-nonce route's
+    mint were not pinned off-loop (the latter was still on it)."""
+    import asyncio
+
+    client, store, _ctx, _bucket, acme = _setup(tmp_path)
+    original = store.create_nonce
+    on_loop: list[bool] = []
+
+    def recording() -> str:
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(True)
+        except RuntimeError:
+            on_loop.append(False)
+        return original()
+
+    monkeypatch.setattr(store, "create_nonce", recording)
+    if path == "new-nonce":
+        assert client.head("/acme/new-nonce").headers.get("Replay-Nonce")
+    else:
+        resp = _post(client, "/acme/new-order", _new_order_body(acme, "not-a-real-nonce"))
+        assert resp.status_code == 400 and resp.headers.get("Replay-Nonce")
+    assert on_loop == [False]

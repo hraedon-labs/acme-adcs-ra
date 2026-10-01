@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response
+from starlette.concurrency import run_in_threadpool
 
 from acme_adcs_ra.acme_errors import rate_limited
 from acme_adcs_ra.app_state import (
@@ -32,7 +33,7 @@ async def directory(ctx: ServerContext = Depends(get_context)) -> dict[str, Any]
     }
 
 
-def _nonce_response(ctx: ServerContext) -> Response:
+async def _nonce_response(ctx: ServerContext) -> Response:
     # Bounded BEFORE the SQLite write: an unauthenticated flood must not be
     # able to hold the single writer against the issuance path. Cheap enough
     # that a rejected request costs less than an accepted one.
@@ -42,7 +43,11 @@ def _nonce_response(ctx: ServerContext) -> Response:
             "nonce request rate limit exceeded",
             retry_after=bucket.retry_after_seconds(),
         )
-    nonce = ctx.store.create_nonce()
+    # Off the event loop, like the response-time mints in server.py: an INSERT
+    # that waits out the busy timeout must not stall every other request
+    # (DeepSeek round 4 noted this, the busiest unauthenticated mint, was
+    # still on the loop).
+    nonce = await run_in_threadpool(ctx.store.create_nonce)
     return Response(
         status_code=204,
         headers={
@@ -54,9 +59,9 @@ def _nonce_response(ctx: ServerContext) -> Response:
 
 @router.head(_ACME_PATHS["newNonce"])
 async def new_nonce_head(ctx: ServerContext = Depends(get_context)) -> Response:
-    return _nonce_response(ctx)
+    return await _nonce_response(ctx)
 
 
 @router.get(_ACME_PATHS["newNonce"])
 async def new_nonce_get(ctx: ServerContext = Depends(get_context)) -> Response:
-    return _nonce_response(ctx)
+    return await _nonce_response(ctx)

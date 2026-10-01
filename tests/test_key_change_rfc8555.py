@@ -33,6 +33,7 @@ from .test_key_change import _make_app, _make_config
 
 BASE = "http://testserver"
 KEY_CHANGE_URL = f"{BASE}/acme/key-change"
+_KID = "kid-001"
 
 
 def _setup(tmp_path: Path) -> tuple[TestClient, Store, HandRolledAcmeClient]:
@@ -260,3 +261,35 @@ def test_outer_jws_must_be_flattened_without_unprotected_header(
     )
     assert resp.status_code == 400, resp.text
     assert resp.json()["type"] == "urn:ietf:params:acme:error:malformed"
+
+
+@pytest.mark.parametrize("member", ["header", "signatures"])
+def test_eab_jws_must_be_flattened_without_unprotected_header(
+    tmp_path: Path, member: str
+) -> None:
+    """DeepSeek round 4: the EAB leg of the §6.2 refusal had no test."""
+    from .hand_rolled_acme_client import make_eab_jws
+
+    config = _make_config(tmp_path)
+    app, _store, _ctx = _make_app(config)
+    client = TestClient(app)
+    key = ec.generate_private_key(ec.SECP256R1())
+    jwk = jwk_from_private_key(key)
+    mac = config.eab_key_bytes(_KID)
+    assert mac is not None
+    url = f"{BASE}/acme/new-acct"
+    eab: dict[str, Any] = dict(make_eab_jws(jwk, _KID, mac, url=url))
+    eab[member] = {"x": 1} if member == "header" else []
+    outer = sign_jws(
+        {"externalAccountBinding": eab, "termsOfServiceAgreed": True},
+        key,
+        {"alg": "ES256", "jwk": jwk, "nonce": _fresh_nonce(client), "url": url},
+    )
+    resp = _post_to(client, "/acme/new-acct", outer)
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:badExternalAccountBinding"
+    assert "RFC 8555 §6.2" in resp.json()["detail"]
+
+
+def _post_to(client: TestClient, path: str, body: dict[str, Any]) -> Any:
+    return client.post(path, content=json.dumps(body), headers={"Content-Type": "application/jose+json"})
