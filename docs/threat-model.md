@@ -224,7 +224,8 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   the kid is the operator-side one. Both are audited
   (`account-deactivated`, `account-request-denied`).
 - **CSRF / cross-protocol:** ACME POSTs are `application/jose+json` (RFC 8555
-  §6.1) and the body is a key-bound JWS signature. There is no browser-rendered
+  §6.2; enforced since 2026-10-01 — anything else is 415 before the body is
+  read or a nonce spent) and the body is a key-bound JWS signature. There is no browser-rendered
   surface; a same-origin attacker would still need the account key. CSRF is a
   non-issue *because* of JWS + EAB + the network allowlist — not because of a
   CSRF token.

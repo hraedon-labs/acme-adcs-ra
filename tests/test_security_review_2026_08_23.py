@@ -100,9 +100,9 @@ class TestKeyChangeCompareAndSwap:
     ) -> None:
         store = Store(tmp_path / "ra.db")
         old_jwk = placeholder_rsa_jwk("old")
-        account = store.create_account(jwk=old_jwk, eab_kid="kid-a")
+        account = store.create_account(jwk=old_jwk, eab_kid="kid-a-0123456789abcdef")
         occupied_jwk = placeholder_rsa_jwk("occupied")
-        store.create_account(jwk=occupied_jwk, eab_kid="kid-b")
+        store.create_account(jwk=occupied_jwk, eab_kid="kid-b-0123456789abcdef")
 
         with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
             store.update_account_key_with_audit(

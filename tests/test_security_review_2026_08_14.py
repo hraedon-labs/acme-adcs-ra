@@ -326,10 +326,10 @@ class TestOneAccountPerKey:
 
         store, _client = _app_with_leg(tmp_path, FakeEnrollmentLeg())
         jwk = jwk_from_private_key(ec.generate_private_key(ec.SECP256R1()))
-        store.create_account(jwk=jwk, eab_kid="kid-001")
+        store.create_account(jwk=jwk, eab_kid="kid-001-0123456789abcdef")
 
         with pytest.raises(sqlite3.IntegrityError):
-            store.create_account(jwk=jwk, eab_kid="kid-001")
+            store.create_account(jwk=jwk, eab_kid="kid-001-0123456789abcdef")
 
     def test_a_different_key_is_unaffected(self, tmp_path: Path) -> None:
         """Negative control: the constraint must be per-key, not a global cap."""
@@ -340,7 +340,7 @@ class TestOneAccountPerKey:
         store, _client = _app_with_leg(tmp_path, FakeEnrollmentLeg())
         for _ in range(3):
             jwk = jwk_from_private_key(ec.generate_private_key(ec.SECP256R1()))
-            store.create_account(jwk=jwk, eab_kid="kid-001")
+            store.create_account(jwk=jwk, eab_kid="kid-001-0123456789abcdef")
 
     def test_the_route_resolves_the_race_instead_of_500ing(
         self, tmp_path: Path
@@ -356,10 +356,10 @@ class TestOneAccountPerKey:
         cfg = _make_test_config(tmp_path)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, "http://testserver", key)
-        mac = _eab_mac_key(cfg, "kid-001")
-        first = ac.new_account("kid-001", mac)
+        mac = _eab_mac_key(cfg, "kid-001-0123456789abcdef")
+        first = ac.new_account("kid-001-0123456789abcdef", mac)
         assert first.status_code == 201
-        second = ac.new_account("kid-001", mac)
+        second = ac.new_account("kid-001-0123456789abcdef", mac)
         assert second.status_code == 200
         assert second.headers["Location"] == first.headers["Location"]
 
@@ -381,7 +381,7 @@ class TestRevocationAtomicity:
         cfg = _make_test_config(tmp_path)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, "http://testserver", key)
-        ac.new_account("kid-001", _eab_mac_key(cfg, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(cfg, "kid-001-0123456789abcdef"))
         cert_der = _issue_via(ac, client)
 
         original = store._record_audit_in_conn
@@ -478,7 +478,7 @@ class TestUnauthenticatedResourceGetIsRemoved:
         cfg = _make_test_config(tmp_path)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, "http://testserver", key)
-        ac.new_account("kid-001", _eab_mac_key(cfg, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(cfg, "kid-001-0123456789abcdef"))
         order = ac.new_order(["srv01.WORK-DOMAIN.local"]).json()
         for authz_url in order["authorizations"]:
             authz = ac.post_as_get(authz_url).json()
@@ -506,7 +506,7 @@ class TestUnauthenticatedResourceGetIsRemoved:
         cfg = _make_test_config(tmp_path)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, "http://testserver", key)
-        ac.new_account("kid-001", _eab_mac_key(cfg, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(cfg, "kid-001-0123456789abcdef"))
         order = ac.new_order(["srv01.WORK-DOMAIN.local"]).json()
         authz_url = order["authorizations"][0]
         assert client.get(authz_url).status_code == 405
@@ -601,7 +601,7 @@ def _drive_order_to_finalize(client: Any) -> Any:
     cfg = _make_test_config(Path("/nonexistent"))  # only for the MAC key
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     ac = HandRolledAcmeClient(client, "http://testserver", key)
-    assert ac.new_account("kid-001", _eab_mac_key(cfg, "kid-001")).status_code == 201
+    assert ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(cfg, "kid-001-0123456789abcdef")).status_code == 201
 
     resp = ac.new_order(["srv01.WORK-DOMAIN.local"])
     assert resp.status_code == 201
@@ -621,7 +621,7 @@ def _seed_processing_order(store: Store) -> tuple[str, str]:
 
     account = store.create_account(
         jwk=jwk_from_private_key(ec.generate_private_key(ec.SECP256R1())),
-        eab_kid="kid-1",
+        eab_kid="kid-1-0123456789abcdef",
     )
     order = store.create_order_with_authz(
         account_id=account.id,

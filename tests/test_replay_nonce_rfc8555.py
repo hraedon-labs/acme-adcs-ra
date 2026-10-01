@@ -56,9 +56,9 @@ def _setup(tmp_path: Path) -> tuple[TestClient, Store, ServerContext, _Bucket, H
     ctx.nonce_bucket = bucket  # type: ignore[assignment]
     client = TestClient(app)
     acme = HandRolledAcmeClient(client, BASE, ec.generate_private_key(ec.SECP256R1()))
-    mac_key = config.eab_key_bytes("kid-001")
+    mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
     assert mac_key is not None
-    assert acme.new_account("kid-001", mac_key).status_code == 201
+    assert acme.new_account("kid-001-0123456789abcdef", mac_key).status_code == 201
     return client, store, ctx, bucket, acme
 
 
@@ -104,9 +104,9 @@ def test_new_account_success_carries_a_nonce(tmp_path: Path) -> None:
     app, _store, _ctx = _make_app(config)
     client = TestClient(app)
     acme = HandRolledAcmeClient(client, BASE, ec.generate_private_key(ec.SECP256R1()))
-    mac_key = config.eab_key_bytes("kid-001")
+    mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
     assert mac_key is not None
-    resp = acme.new_account("kid-001", mac_key)
+    resp = acme.new_account("kid-001-0123456789abcdef", mac_key)
     assert resp.status_code == 201
     assert resp.headers.get("Replay-Nonce")
 

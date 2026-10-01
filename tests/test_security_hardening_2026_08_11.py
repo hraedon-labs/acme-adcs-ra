@@ -8,6 +8,7 @@ scan, the PKCS#7 chain binding, and the keyChange ``oldKey`` error path.
 from __future__ import annotations
 
 import datetime
+import json
 from pathlib import Path
 
 import pytest
@@ -354,7 +355,7 @@ def test_key_change_malformed_oldkey_is_a_client_error(tmp_path: Path) -> None:
     """
     import base64 as _b64
 
-    from .hand_rolled_acme_client import HandRolledAcmeClient, sign_jws
+    from .hand_rolled_acme_client import JOSE_HEADERS, HandRolledAcmeClient, sign_jws
     from .test_account_lifecycle import BASE_URL, KID, MAC_B64, _build
 
     client, _ctx = _build(tmp_path)
@@ -388,7 +389,7 @@ def test_key_change_malformed_oldkey_is_a_client_error(tmp_path: Path) -> None:
             "url": url,
         },
     )
-    resp = client.post("/acme/key-change", json=outer)
+    resp = client.post("/acme/key-change", content=json.dumps(outer), headers=JOSE_HEADERS)
     assert resp.status_code == 400, resp.text
     assert "not a usable JWK" in resp.json()["detail"]
 

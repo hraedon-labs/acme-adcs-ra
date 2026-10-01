@@ -13,6 +13,8 @@ from typing import Any
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
+JOSE_HEADERS = {"Content-Type": "application/jose+json"}
+
 
 def b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
@@ -182,7 +184,9 @@ class HandRolledAcmeClient:
                 raise RuntimeError("account URL not known; call new_account first")
             protected["kid"] = self.account_url
         body = sign_jws(payload, self.account_key, protected)
-        resp = self.http.post(url, json=body)
+        # RFC 8555 §6.2: JWS POSTs are application/jose+json (the RA answers
+        # anything else with 415). httpx's json= would send application/json.
+        resp = self.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         # Save nonce for next request if present.
         if "Replay-Nonce" in resp.headers:
             self._nonce = resp.headers["Replay-Nonce"]

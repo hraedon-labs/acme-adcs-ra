@@ -45,8 +45,8 @@ def _make_config(
         base_url="http://testserver",
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
-        eab_allowlist=[EABEntry(kid="kid-001", mac_key=MAC_KEY_B64)],
-        san_scopes={"kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local"]}},
+        eab_allowlist=[EABEntry(kid="kid-001-0123456789abcdef", mac_key=MAC_KEY_B64)],
+        san_scopes={"kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local"]}},
         max_accounts_per_eab_kid=accounts_per_kid,
         rate_limit_key_changes_per_window=key_change_limit,
         rate_limit_window_seconds=window,
@@ -87,9 +87,9 @@ def _enrolled_client(
     client: TestClient, config: RAConfig, key: rsa.RSAPrivateKey
 ) -> HandRolledAcmeClient:
     acme = HandRolledAcmeClient(client, "http://testserver", key)
-    mac_key = config.eab_key_bytes("kid-001")
+    mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
     assert mac_key is not None
-    resp = acme.new_account("kid-001", mac_key)
+    resp = acme.new_account("kid-001-0123456789abcdef", mac_key)
     assert resp.status_code == 201, resp.text
     return acme
 
@@ -231,7 +231,7 @@ class TestDenialIsAccountable:
         assert details["scope"] == "per-account"
         assert details["limit"] == 1
         assert details["window_seconds"] == 3600
-        assert details["kid"] == "kid-001"
+        assert details["kid"] == "kid-001-0123456789abcdef"
         # ``count`` is the rollovers observed in the window (what tripped the
         # ceiling); ``denial_count`` is the coalescer's tally of folded
         # attempts. Every attempt is counted even though only one row exists.

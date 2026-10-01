@@ -86,7 +86,7 @@ def _ready_finalize(client: Any) -> tuple[Any, Any, str, bytes]:
     cfg = _make_test_config(Path("/nonexistent"))
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     acme = HandRolledAcmeClient(client, "http://testserver", key)
-    assert acme.new_account("kid-001", _eab_mac_key(cfg, "kid-001")).status_code == 201
+    assert acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(cfg, "kid-001-0123456789abcdef")).status_code == 201
     order = acme.new_order(["srv01.WORK-DOMAIN.local"]).json()
     for authz_url in order["authorizations"]:
         authz = acme.get_authorization(authz_url).json()
@@ -461,11 +461,11 @@ class TestTheDurableLeaseStopsAStaleWorker:
         store, client = _app_with_leg(tmp_path, leg)
         order_id, account_id = _seed_processing_order(store)
         ctx = client.app.state.context
-        # _seed_processing_order predates the live-EAB recheck and uses kid-1;
+        # _seed_processing_order predates the live-EAB recheck and uses kid-1-0123456789abcdef;
         # make that seed authorized unless a test deliberately evicts it.
         ctx.config.eab_allowlist = [
             *ctx.config.eab_allowlist,
-            ctx.config.eab_allowlist[0].model_copy(update={"kid": "kid-1"}),
+            ctx.config.eab_allowlist[0].model_copy(update={"kid": "kid-1-0123456789abcdef"}),
         ]
         return ctx, store, order_id, account_id
 

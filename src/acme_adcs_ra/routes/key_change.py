@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from acme_adcs_ra.acme_errors import (
     bad_public_key,
+    bad_signature_algorithm,
     malformed,
     rate_limited,
     unauthorized,
@@ -24,7 +25,9 @@ from acme_adcs_ra.app_state import (
     get_context,
 )
 from acme_adcs_ra.jws import (
+    SUPPORTED_JWS_ALGORITHMS,
     JWSValidationError,
+    UnsupportedSignatureAlgorithmError,
     _base64url_decode,
     _public_key_from_jwk,
     jwk_thumbprint,
@@ -112,6 +115,11 @@ async def key_change(
 
     try:
         inner_payload_bytes = verify_flattened_jws(inner_jws, new_public_key)
+    except UnsupportedSignatureAlgorithmError as exc:
+        raise bad_signature_algorithm(
+            f"inner JWS verification failed: {exc}",
+            algorithms=list(SUPPORTED_JWS_ALGORITHMS),
+        ) from exc
     except JWSValidationError as exc:
         raise unauthorized(f"inner JWS verification failed: {exc}") from exc
 

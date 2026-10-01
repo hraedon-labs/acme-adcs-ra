@@ -47,8 +47,23 @@ class JWSValidationError(Exception):
     """Raised when a JWS fails structural or cryptographic validation."""
 
 
+# The JWS ``alg`` values verify_flattened_jws accepts, in the order a client
+# should prefer them. Published in badSignatureAlgorithm (RFC 8555 §6.2).
+SUPPORTED_JWS_ALGORITHMS: tuple[str, ...] = (
+    "ES256", "ES384", "ES512", "RS256", "RS384", "RS512",
+)
+
+
 class UnsupportedAlgorithmError(JWSValidationError):
     """Raised when the JWS uses an algorithm we do not support."""
+
+
+class UnsupportedSignatureAlgorithmError(UnsupportedAlgorithmError):
+    """The JWS protected header names an ``alg`` outside the allowlist.
+
+    Distinct from its parent, which also covers unsupported JWK key types and
+    curves: only this case maps to ``badSignatureAlgorithm`` (RFC 8555 §6.2).
+    """
 
 
 def _base64url_encode(data: bytes) -> str:
@@ -467,7 +482,7 @@ def verify_flattened_jws(
             der_signature = _raw_ecdsa_to_der(signature, coordinate_len)
             public_key.verify(der_signature, signing_input, ec.ECDSA(_hash_for_alg(alg)))
         else:
-            raise UnsupportedAlgorithmError(f"unsupported JWS alg: {alg}")
+            raise UnsupportedSignatureAlgorithmError(f"unsupported JWS alg: {alg}")
     except InvalidSignature as exc:
         raise JWSValidationError("JWS signature verification failed") from exc
     except UnsupportedAlgorithmError:

@@ -14,12 +14,16 @@ from fastapi import Request
 from acme_adcs_ra.acme_errors import (
     bad_nonce,
     bad_public_key,
+    bad_signature_algorithm,
     malformed,
     unauthorized,
+    unsupported_media_type,
 )
 from acme_adcs_ra.http_body import read_body_limited
 from acme_adcs_ra.jws import (
+    SUPPORTED_JWS_ALGORITHMS,
     JWSValidationError,
+    UnsupportedSignatureAlgorithmError,
     _base64url_decode,
     _public_key_from_jwk,
     jwk_thumbprint,
@@ -113,9 +117,31 @@ def _consume_nonce(store: Store, header: dict[str, Any], request_url: str) -> No
         raise bad_nonce(f"invalid or replayed Replay-Nonce for {request_url}")
 
 
+JOSE_JSON = "application/jose+json"
+
+
+def _require_jose_json(request: Request) -> None:
+    """RFC 8555 §6.2: a JWS POST MUST be ``application/jose+json``, else 415.
+
+    Checked before the body is read and before any nonce is spent, so a
+    wrong-media-type request costs nothing. Media-type parameters (e.g.
+    ``; charset=utf-8``) are ignored and the type compares case-insensitively,
+    per RFC 9110 §8.3.1. The threat model's CSRF argument leaned on this
+    property while the code did not enforce it (WI-034).
+    """
+    raw = request.headers.get("content-type", "")
+    media_type = raw.split(";", 1)[0].strip().lower()
+    if media_type != JOSE_JSON:
+        raise unsupported_media_type(
+            f"ACME requests must use Content-Type {JOSE_JSON} "
+            f"(RFC 8555 §6.2); got {raw or 'none'!r}"
+        )
+
+
 async def _parse_jws_body(
     request: Request, *, max_body_size_bytes: int = 65536
 ) -> dict[str, Any]:
+    _require_jose_json(request)
     body = await read_body_limited(
         request, max_bytes=max_body_size_bytes, what="JWS request"
     )
@@ -178,6 +204,11 @@ def _verify_jws_signature(
     """Verify the JWS signature and return the parsed payload dict."""
     try:
         payload = verify_flattened_jws(jws, public_key)
+    except UnsupportedSignatureAlgorithmError as exc:
+        raise bad_signature_algorithm(
+            f"JWS verification failed: {exc}",
+            algorithms=list(SUPPORTED_JWS_ALGORITHMS),
+        ) from exc
     except JWSValidationError as exc:
         raise unauthorized(f"JWS verification failed: {exc}") from exc
 

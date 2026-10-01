@@ -29,6 +29,7 @@ from acme_adcs_ra.app_state import (
 )
 from acme_adcs_ra.audit_coalesce import DenialCoalescer
 from acme_adcs_ra.audit_retention import assert_retention_above_floor, log_footprint
+from acme_adcs_ra.eab_kid_floor import assert_eab_kids_meet_floor
 from acme_adcs_ra.routes.acme import router as acme_router
 from acme_adcs_ra.routes.admin import router as admin_router
 from acme_adcs_ra.siem import SiemEmitter
@@ -226,6 +227,7 @@ def create_app(context: ServerContext) -> FastAPI:
     # choice. The footprint report is the half every deployment gets, including
     # the local-only ones that will never delete a row.
     assert_retention_above_floor(context.config, context.store)
+    assert_eab_kids_meet_floor(context.config, context.store)
     log_footprint(
         context.config,
         context.store,

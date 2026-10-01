@@ -56,12 +56,12 @@ def _make_test_config(tmp_path: Any) -> RAConfig:
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
         eab_allowlist=[
-            EABEntry(kid="kid-001", mac_key=mac_key_b64),
-            EABEntry(kid="kid-002", mac_key="YW5vdGhlci0zMi1ieXRlLW1hYy1rZXktZm9yLXRlc3Rz"),
+            EABEntry(kid="kid-001-0123456789abcdef", mac_key=mac_key_b64),
+            EABEntry(kid="kid-002-0123456789abcdef", mac_key="YW5vdGhlci0zMi1ieXRlLW1hYy1rZXktZm9yLXRlc3Rz"),
         ],
         san_scopes={
-            "kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local", "srv01.WORK-DOMAIN.local"]},
-            "kid-002": {"dns_patterns": ["*.prod.WORK-DOMAIN.local"]},
+            "kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local", "srv01.WORK-DOMAIN.local"]},
+            "kid-002-0123456789abcdef": {"dns_patterns": ["*.prod.WORK-DOMAIN.local"]},
         },
         adcs_template="ACME-ServerAuth",
     )
@@ -126,7 +126,7 @@ def _issue_cert(
     client: TestClient,
     config: RAConfig,
     account_key: rsa.RSAPrivateKey,
-    kid: str = "kid-001",
+    kid: str = "kid-001-0123456789abcdef",
 ) -> tuple[HandRolledAcmeClient, bytes]:
     """Return an ACME client and the DER bytes of the issued certificate."""
     ac = HandRolledAcmeClient(client, config.base_url, account_key)
@@ -216,12 +216,12 @@ class TestRevokeCertAuthorization:
     ) -> None:
         """C-1: a different account gets 404 (not 401) when trying to revoke
         a cert it doesn't own — no information leak about ownership."""
-        _ac1, cert_der = _issue_cert(client, test_config, account_key, kid="kid-001")
+        _ac1, cert_der = _issue_cert(client, test_config, account_key, kid="kid-001-0123456789abcdef")
 
         # Create a second account on the same server.
         account_key2 = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac2 = HandRolledAcmeClient(client, test_config.base_url, account_key2)
-        resp = ac2.new_account("kid-002", _eab_mac_key(test_config, "kid-002"))
+        resp = ac2.new_account("kid-002-0123456789abcdef", _eab_mac_key(test_config, "kid-002-0123456789abcdef"))
         assert resp.status_code == 201
 
         resp = ac2.revoke_certificate(cert_der, reason=0)
@@ -235,7 +235,7 @@ class TestRevokeCertAuthorization:
         account_key: rsa.RSAPrivateKey,
     ) -> None:
         ac = HandRolledAcmeClient(client, test_config.base_url, account_key)
-        ac.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
 
         # A self-signed cert that was never issued by the RA.
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -612,7 +612,7 @@ class TestCasGuardedRevocation:
         # existing test_unknown_cert_returns_not_found, but kept for the
         # M-3 contract surface).
         ac = HandRolledAcmeClient(client, test_config.base_url, account_key)
-        ac.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
 
         # A self-signed cert that was never issued by the RA.
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -1012,9 +1012,9 @@ class TestSerialCollisionSafety:
         )
         client = TestClient(create_app(context))
 
-        # Account A issues a cert (kid-001).
+        # Account A issues a cert (kid-001-0123456789abcdef).
         ac_a = HandRolledAcmeClient(client, test_config.base_url, account_key)
-        resp_a = ac_a.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        resp_a = ac_a.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp_a.status_code == 201
         order_a = ac_a.new_order(["srv01.WORK-DOMAIN.local"]).json()
         for authz_url in order_a["authorizations"]:
@@ -1032,10 +1032,10 @@ class TestSerialCollisionSafety:
             serialization.Encoding.DER
         )
 
-        # Account B issues a cert (kid-002) — same static serial from FakeEnrollmentLeg.
+        # Account B issues a cert (kid-002-0123456789abcdef) — same static serial from FakeEnrollmentLeg.
         key_b = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac_b = HandRolledAcmeClient(client, test_config.base_url, key_b)
-        resp_b = ac_b.new_account("kid-002", _eab_mac_key(test_config, "kid-002"))
+        resp_b = ac_b.new_account("kid-002-0123456789abcdef", _eab_mac_key(test_config, "kid-002-0123456789abcdef"))
         assert resp_b.status_code == 201
         order_b = ac_b.new_order(["web.prod.WORK-DOMAIN.local"]).json()
         for authz_url in order_b["authorizations"]:

@@ -48,7 +48,7 @@ from acme_adcs_ra.store import Store
 
 from .hand_rolled_acme_client import HandRolledAcmeClient
 
-KID = "kid-001"
+KID = "kid-001-0123456789abcdef"
 MAC_B64 = "c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE"
 BASE_URL = "http://testserver"
 

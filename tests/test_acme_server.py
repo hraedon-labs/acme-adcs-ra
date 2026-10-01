@@ -21,7 +21,7 @@ from acme_adcs_ra.revocation import FakeRevocationLeg
 from acme_adcs_ra.server import ServerContext, create_app
 from acme_adcs_ra.store import NONCE_TTL_SECONDS, Store, _now_iso, is_expired
 
-from .hand_rolled_acme_client import HandRolledAcmeClient
+from .hand_rolled_acme_client import JOSE_HEADERS, HandRolledAcmeClient
 
 # ---------------------------------------------------------------------------
 # Test config and fixtures
@@ -36,12 +36,12 @@ def _make_test_config(tmp_path: Path) -> RAConfig:
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
         eab_allowlist=[
-            EABEntry(kid="kid-001", mac_key=mac_key_b64),
-            EABEntry(kid="kid-002", mac_key="YW5vdGhlci0zMi1ieXRlLW1hYy1rZXktZm9yLXRlc3Rz"),
+            EABEntry(kid="kid-001-0123456789abcdef", mac_key=mac_key_b64),
+            EABEntry(kid="kid-002-0123456789abcdef", mac_key="YW5vdGhlci0zMi1ieXRlLW1hYy1rZXktZm9yLXRlc3Rz"),
         ],
         san_scopes={
-            "kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local", "srv01.WORK-DOMAIN.local"]},
-            "kid-002": {"dns_patterns": ["*.prod.WORK-DOMAIN.local"]},
+            "kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local", "srv01.WORK-DOMAIN.local"]},
+            "kid-002-0123456789abcdef": {"dns_patterns": ["*.prod.WORK-DOMAIN.local"]},
         },
         adcs_template="ACME-ServerAuth",
         admin_token=SecretStr("test-admin-token-0123456789abcdef-32+"),
@@ -169,7 +169,7 @@ def _issue_cert_record(
     test_config: RAConfig,
 ) -> Any:
     """Issue a certificate through the ACME flow and return its store record."""
-    acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+    acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
     order = _walk_to_ready(acme_client, ["srv01.WORK-DOMAIN.local"])
     csr_der = _make_csr(["srv01.WORK-DOMAIN.local"])
     finalize_resp = acme_client.finalize_order(order["finalize"], csr_der)
@@ -328,7 +328,7 @@ class TestNewAccount:
         assert "JWS request body too large" in resp.json()["detail"]
 
     def test_new_account_success(self, acme_client: HandRolledAcmeClient, test_config: RAConfig) -> None:
-        resp = acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        resp = acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 201
         body = resp.json()
         assert body["status"] == "valid"
@@ -346,14 +346,14 @@ class TestNewAccount:
             "jwk": acme_client.account_jwk,
         }
         body = sign_jws({"termsOfServiceAgreed": True}, acme_client.account_key, protected)
-        resp = acme_client.http.post(url, json=body)
+        resp = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp.status_code == 400
         assert "externalAccountBinding" in resp.json()["detail"]
 
     def test_new_account_unknown_kid_rejected(
         self, acme_client: HandRolledAcmeClient, test_config: RAConfig
     ) -> None:
-        resp = acme_client.new_account("kid-unknown", _eab_mac_key(test_config, "kid-001"))
+        resp = acme_client.new_account("kid-unknown", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 400
         assert resp.json()["type"] == "urn:ietf:params:acme:error:badExternalAccountBinding"
 
@@ -361,7 +361,7 @@ class TestNewAccount:
         self, acme_client: HandRolledAcmeClient
     ) -> None:
         bad_key = b"wrong-key-32-bytes-long!!!!!!!!!"
-        resp = acme_client.new_account("kid-001", bad_key)
+        resp = acme_client.new_account("kid-001-0123456789abcdef", bad_key)
         assert resp.status_code == 400
         assert resp.json()["type"] == "urn:ietf:params:acme:error:badExternalAccountBinding"
 
@@ -372,8 +372,8 @@ class TestNewAccount:
         nonce = acme_client._fresh_nonce()
         eab_jws = make_eab_jws(
             acme_client.account_jwk,
-            "kid-001",
-            _eab_mac_key(test_config, "kid-001"),
+            "kid-001-0123456789abcdef",
+            _eab_mac_key(test_config, "kid-001-0123456789abcdef"),
             url=url,
         )
         protected = {
@@ -387,9 +387,9 @@ class TestNewAccount:
             acme_client.account_key,
             protected,
         )
-        resp1 = acme_client.http.post(url, json=body)
+        resp1 = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp1.status_code == 201
-        resp2 = acme_client.http.post(url, json=body)
+        resp2 = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp2.status_code == 400
         assert resp2.json()["type"] == "urn:ietf:params:acme:error:badNonce"
 
@@ -408,7 +408,7 @@ class TestAccountCreationDeniedAudit:
         """M-2: An unknown-kid newAccount attempt produces an account-creation-denied audit row."""
         store = Store(test_config.db_path)
         before = store.list_audit_events(event_type="account-creation-denied")
-        resp = acme_client.new_account("kid-unknown", _eab_mac_key(test_config, "kid-001"))
+        resp = acme_client.new_account("kid-unknown", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 400
         after = store.list_audit_events(event_type="account-creation-denied")
         assert len(after) == len(before) + 1
@@ -425,7 +425,7 @@ class TestAccountCreationDeniedAudit:
         store = Store(test_config.db_path)
         before = store.list_audit_events(event_type="account-creation-denied")
         bad_key = b"wrong-key-32-bytes-long!!!!!!!!!"
-        resp = acme_client.new_account("kid-001", bad_key)
+        resp = acme_client.new_account("kid-001-0123456789abcdef", bad_key)
         assert resp.status_code == 400
         after = store.list_audit_events(event_type="account-creation-denied")
         assert len(after) == len(before) + 1
@@ -448,7 +448,7 @@ class TestPolicyViaFinalize:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        resp = acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        resp = acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 201
 
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
@@ -485,7 +485,7 @@ class TestPolicyViaFinalize:
         acme_client: HandRolledAcmeClient,
         test_config: RAConfig,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["evil.other-domain.local"])
         assert resp.status_code == 201
         order = resp.json()
@@ -505,7 +505,7 @@ class TestPolicyViaFinalize:
         acme_client: HandRolledAcmeClient,
         test_config: RAConfig,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["srv01.WORK-DOMAIN.local"])
         order = resp.json()
 
@@ -526,7 +526,7 @@ class TestPolicyViaFinalize:
         assert "no SANs" in finalize_resp.json()["detail"]
 
     def test_wrong_account_kid_rejected(self, acme_client: HandRolledAcmeClient, test_config: RAConfig) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         # Send a newOrder signed with a bogus account URL.
         acme_client.account_url = "http://testserver/acme/acct/00000000000000000000000000000000"
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
@@ -559,7 +559,7 @@ class TestNewOrderDnsIdentifierValidation:
         test_config: RAConfig,
         identifier: str,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order([identifier])
         assert resp.status_code == 400
         assert resp.json()["type"] == "urn:ietf:params:acme:error:rejectedIdentifier"
@@ -574,7 +574,7 @@ class TestNewOrderDnsIdentifierValidation:
         test_config: RAConfig,
     ) -> None:
         """A valid DNS identifier must still create an order (regression)."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         assert resp.status_code == 201
         assert resp.json()["status"] == "pending"
@@ -585,7 +585,7 @@ class TestNewOrderDnsIdentifierValidation:
         test_config: RAConfig,
     ) -> None:
         """A trailing-dot FQDN (RFC 1034 notation) is valid DNS syntax."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local."])
         assert resp.status_code == 201
 
@@ -595,7 +595,7 @@ class TestNewOrderDnsIdentifierValidation:
         test_config: RAConfig,
     ) -> None:
         """If any identifier is malformed, the whole order is rejected."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order([
             "web.WORK-DOMAIN.local",
             "web..WORK-DOMAIN.local",
@@ -617,7 +617,7 @@ class TestOrderExpiry:
     ) -> None:
         """Orders must not be born expired (RFC 8555 §7.1.4) — a well-behaved
         client rejects an already-expired order."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         expires_str = resp.json()["expires"]
         expires = datetime.fromisoformat(expires_str)
@@ -634,7 +634,7 @@ class TestFullRoundTrip:
         client: TestClient,
     ) -> None:
         # 1. EAB-bound newAccount.
-        resp = acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        resp = acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 201
 
         # 2. newOrder for an in-scope SAN.
@@ -709,7 +709,7 @@ class TestAuditHook:
         )
         client = TestClient(create_app(context))
         ac = HandRolledAcmeClient(client, "http://testserver", account_key)
-        resp = ac.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        resp = ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 201
         assert any(e["event_type"] == "account-created" and e["outcome"] == "success" for e in events)
 
@@ -811,8 +811,8 @@ class TestNonceConsumeTtl:
 
         eab_jws = make_eab_jws(
             acme_client.account_jwk,
-            "kid-001",
-            _eab_mac_key(test_config, "kid-001"),
+            "kid-001-0123456789abcdef",
+            _eab_mac_key(test_config, "kid-001-0123456789abcdef"),
             url=url,
         )
         protected = {
@@ -826,7 +826,7 @@ class TestNonceConsumeTtl:
             acme_client.account_key,
             protected,
         )
-        resp = acme_client.http.post(url, json=body)
+        resp = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp.status_code == 400
         assert resp.json()["type"] == "urn:ietf:params:acme:error:badNonce"
 
@@ -843,7 +843,7 @@ class TestFullUrlBinding:
         test_config: RAConfig,
     ) -> None:
         """A JWS whose protected url has a different host must be rejected."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         # Forge a JWS with a wrong host in the url.
         url = f"{acme_client.base_url}/acme/new-order"
         from .hand_rolled_acme_client import sign_jws
@@ -858,7 +858,7 @@ class TestFullUrlBinding:
             "identifiers": [{"type": "dns", "value": "test.WORK-DOMAIN.local"}],
         }
         body = sign_jws(payload, acme_client.account_key, protected)
-        resp = acme_client.http.post(url, json=body)
+        resp = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp.status_code == 400
         assert "host mismatch" in resp.json()["detail"]
 
@@ -868,7 +868,7 @@ class TestFullUrlBinding:
         test_config: RAConfig,
     ) -> None:
         """A JWS whose protected url matches scheme+host+path works."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         assert resp.status_code == 201
 
@@ -879,7 +879,7 @@ class TestFullUrlBinding:
     ) -> None:
         """A relative url (no scheme/host) must be rejected - otherwise a stolen
         JWS could replay against any host at the same path."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         url = f"{acme_client.base_url}/acme/new-order"
         from .hand_rolled_acme_client import sign_jws
 
@@ -891,7 +891,7 @@ class TestFullUrlBinding:
         }
         payload = {"identifiers": [{"type": "dns", "value": "test.WORK-DOMAIN.local"}]}
         body = sign_jws(payload, acme_client.account_key, protected)
-        resp = acme_client.http.post(url, json=body)
+        resp = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp.status_code == 400
         assert "absolute URL" in resp.json()["detail"]
 
@@ -908,7 +908,7 @@ class TestChallengePayloadValidation:
         test_config: RAConfig,
     ) -> None:
         """A challenge POST with non-empty payload must be rejected."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         authz_url = order["authorizations"][0]
@@ -926,7 +926,7 @@ class TestChallengePayloadValidation:
             "kid": acme_client.account_url,
         }
         body = sign_jws({"keyAuthorization": "bogus"}, acme_client.account_key, protected)
-        resp = acme_client.http.post(url, json=body)
+        resp = acme_client.http.post(url, content=json.dumps(body), headers=JOSE_HEADERS)
         assert resp.status_code == 400
         assert "empty object" in resp.json()["detail"]
 
@@ -957,7 +957,7 @@ class TestMaybeReadyOrderCasGuard:
         store, context = _make_context(config, FakeEnrollmentLeg())
         client = TestClient(create_app(context))
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(ac, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1008,7 +1008,7 @@ class TestMaybeReadyOrderCasGuard:
         store, context = _make_context(config, FakeEnrollmentLeg())
         client = TestClient(create_app(context))
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         # Create an order but do NOT walk its challenges — it stays 'pending'.
         order = ac.new_order(["web.WORK-DOMAIN.local"]).json()
@@ -1050,7 +1050,7 @@ class TestMaybeReadyOrderCasGuard:
         store, context = _make_context(config, FakeEnrollmentLeg())
         client = TestClient(create_app(context))
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         order = ac.new_order(["web.WORK-DOMAIN.local"]).json()
         order_id = _order_id_from_finalize_url(order["finalize"])
@@ -1090,7 +1090,7 @@ class TestMaybeReadyOrderCasGuard:
         store, _context = _make_context(config, FakeEnrollmentLeg())
         client = TestClient(create_app(_make_context(config, FakeEnrollmentLeg())[1]))
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(ac, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
         assert store.get_order(order_id).status == "ready"
@@ -1114,7 +1114,7 @@ class TestDoubleFinalizeGuard:
         test_config: RAConfig,
     ) -> None:
         """Finalizing an already-finalized order returns the existing cert."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
 
@@ -1163,7 +1163,7 @@ class TestDoubleFinalizeGuard:
         client = TestClient(app)
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
 
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = ac.new_order(["web.WORK-DOMAIN.local"]).json()
         for authz_url in order["authorizations"]:
             authz = ac.get_authorization(authz_url).json()
@@ -1197,7 +1197,7 @@ class TestCsrSanTypeValidation:
         test_config: RAConfig,
     ) -> None:
         """A CSR with an IPAddress SAN must be rejected."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         for authz_url in order["authorizations"]:
@@ -1231,7 +1231,7 @@ class TestCsrSanTypeValidation:
         test_config: RAConfig,
     ) -> None:
         """A CSR with a URI SAN must be rejected."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         for authz_url in order["authorizations"]:
@@ -1270,7 +1270,7 @@ class TestCsrSanTypeValidation:
         The order uses a valid identifier (WI-009 rejects wildcards at newOrder);
         the CSR gate is defense-in-depth — it fires before the CSR⊆order check.
         """
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         for authz_url in order["authorizations"]:
@@ -1306,7 +1306,7 @@ class TestCsrSanTypeValidation:
         The order uses a valid identifier (WI-009 rejects wildcards at newOrder);
         the CSR gate is defense-in-depth — it fires before the CSR⊆order check.
         """
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         for authz_url in order["authorizations"]:
@@ -1360,7 +1360,7 @@ class TestCsrDnsNameValidation:
         fragment: str,
     ) -> None:
         """A CSR with a malformed DNS SAN must be rejected with badCSR."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
 
         csr_der = _make_csr([san])
@@ -1379,7 +1379,7 @@ class TestCsrDnsNameValidation:
         Regression test: the DNS syntax validator must not reject hyphens
         in the middle of a label — only leading/trailing hyphens.
         """
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["my-host.WORK-DOMAIN.local"])
 
         csr_der = _make_csr(["my-host.WORK-DOMAIN.local"])
@@ -1400,7 +1400,7 @@ class TestMinimumKeyStrength:
         tmp_path: Path,
     ) -> None:
         """An RSA-1024 CSR must be rejected."""
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = acme_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         for authz_url in order["authorizations"]:
@@ -1437,7 +1437,7 @@ class TestMinimumKeyStrength:
             base_url=acme_client.base_url,
             account_key=ec_key,
         )
-        ec_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        ec_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         resp = ec_client.new_order(["web.WORK-DOMAIN.local"])
         order = resp.json()
         for authz_url in order["authorizations"]:
@@ -1475,9 +1475,9 @@ class TestReviewFixes:
     def test_finalize_rejects_csr_san_not_in_order(
         self, acme_client: HandRolledAcmeClient, test_config: RAConfig
     ) -> None:
-        # other.WORK-DOMAIN.local is within kid-001's EAB scope (*.WORK-DOMAIN.local)
+        # other.WORK-DOMAIN.local is within kid-001-0123456789abcdef's EAB scope (*.WORK-DOMAIN.local)
         # but was NOT in the order — it must still be rejected (RFC 8555 §7.4).
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = self._ready_order(acme_client, ["web.WORK-DOMAIN.local"])
         csr_der = _make_csr(["other.WORK-DOMAIN.local"])
         resp = acme_client.finalize_order(order["finalize"], csr_der)
@@ -1490,7 +1490,7 @@ class TestReviewFixes:
     ) -> None:
         # A CSR rejected by validation must NOT wedge the order in 'processing';
         # the client can retry the same order with a correct CSR.
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = self._ready_order(acme_client, ["web.WORK-DOMAIN.local"])
         bad = acme_client.finalize_order(order["finalize"], _make_csr(["other.WORK-DOMAIN.local"]))
         assert bad.status_code == 400
@@ -1502,7 +1502,7 @@ class TestReviewFixes:
     def test_finalize_csr_san_case_insensitive_subset(
         self, acme_client: HandRolledAcmeClient, test_config: RAConfig
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = self._ready_order(acme_client, ["web.WORK-DOMAIN.local"])
         resp = acme_client.finalize_order(order["finalize"], _make_csr(["WEB.work-domain.local"]))
         assert resp.status_code == 200
@@ -1511,9 +1511,9 @@ class TestReviewFixes:
     def test_new_account_is_idempotent(
         self, acme_client: HandRolledAcmeClient, test_config: RAConfig
     ) -> None:
-        first = acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        first = acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert first.status_code == 201
-        second = acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        second = acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         assert second.status_code == 200
         assert second.headers["Location"] == first.headers["Location"]
 
@@ -1541,7 +1541,7 @@ class TestOrderExpiryEnforcement:
         acme_client: HandRolledAcmeClient,
         test_config: RAConfig,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1549,8 +1549,9 @@ class TestOrderExpiryEnforcement:
         _backdate_order(store, order_id)
 
         resp = acme_client.finalize_order(order["finalize"], _make_csr(["web.WORK-DOMAIN.local"]))
-        assert resp.status_code == 400
-        assert resp.json()["type"] == "urn:ietf:params:acme:error:malformed"
+        # RFC 8555 §7.4: not ready (now invalid) -> 403 orderNotReady (WI-033).
+        assert resp.status_code == 403
+        assert resp.json()["type"] == "urn:ietf:params:acme:error:orderNotReady"
         assert "expired" in resp.json()["detail"]
 
         # The order was transitioned to invalid (RFC 8555 §7.1.6).
@@ -1568,7 +1569,7 @@ class TestOrderExpiryEnforcement:
         test_config: RAConfig,
     ) -> None:
         # Guard against the expiry check being over-broad: a fresh order issues.
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         resp = acme_client.finalize_order(order["finalize"], _make_csr(["web.WORK-DOMAIN.local"]))
         assert resp.status_code == 200
@@ -1589,7 +1590,7 @@ class TestStuckProcessingReclaim:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1635,7 +1636,7 @@ class TestStuckProcessingReclaim:
         store, context = _make_context(config, leg)
         client = TestClient(create_app(context))
         acme = HandRolledAcmeClient(client, "http://testserver", account_key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme, ["web.WORK-DOMAIN.local"])
         acme.finalize_order(order["finalize"], _make_csr(["web.WORK-DOMAIN.local"]))
         order_id = _order_id_from_finalize_url(order["finalize"])
@@ -1684,7 +1685,7 @@ class TestStuckProcessingReclaim:
         store, context = _make_context(config, leg)
         client = TestClient(create_app(context))
         acme = HandRolledAcmeClient(client, "http://testserver", account_key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme, ["web.WORK-DOMAIN.local"])
         acme.finalize_order(order["finalize"], _make_csr(["web.WORK-DOMAIN.local"]))
         order_id = _order_id_from_finalize_url(order["finalize"])
@@ -1714,7 +1715,7 @@ class TestStuckProcessingReclaim:
         store, context = _make_context(config, leg)
         client = TestClient(create_app(context))
         acme = HandRolledAcmeClient(client, "http://testserver", account_key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1748,7 +1749,7 @@ class TestStuckProcessingReclaim:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1775,7 +1776,7 @@ class TestStuckProcessingReclaim:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1865,7 +1866,7 @@ class TestAdminSweeps:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = acme_client.new_order(["web.WORK-DOMAIN.local"]).json()
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1894,7 +1895,7 @@ class TestAdminSweeps:
     ) -> None:
         # A 'processing' order must NOT be auto-invalidated by the sweep — that
         # is operator-reconciliation territory (the reclaim endpoint).
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -1987,7 +1988,7 @@ class TestEnrollmentCasRevert:
         store, context = _make_context(config, leg)
         client = TestClient(create_app(context))
         acme = HandRolledAcmeClient(client, "http://testserver", account_key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -2021,7 +2022,7 @@ class TestEnrollmentCasRevert:
         _, context = _make_context(config, leg)
         client = TestClient(create_app(context))
         acme = HandRolledAcmeClient(client, "http://testserver", account_key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
         leg.order_id = order_id
@@ -2057,7 +2058,7 @@ class TestEnrollmentCasRevert:
         _, context = _make_context(config, leg)
         client = TestClient(create_app(context))
         acme = HandRolledAcmeClient(client, "http://testserver", account_key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
         leg.order_id = order_id
@@ -2107,7 +2108,7 @@ class TestAdminOrderListing:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 
@@ -2130,7 +2131,7 @@ class TestAdminOrderListing:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
 
         resp = client.get(
@@ -2178,7 +2179,7 @@ class TestAdminOrderListing:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
 
         client.get(
@@ -2201,7 +2202,7 @@ class TestAdminOrderListing:
         test_config: RAConfig,
         client: TestClient,
     ) -> None:
-        acme_client.new_account("kid-001", _eab_mac_key(test_config, "kid-001"))
+        acme_client.new_account("kid-001-0123456789abcdef", _eab_mac_key(test_config, "kid-001-0123456789abcdef"))
         order = _walk_to_ready(acme_client, ["web.WORK-DOMAIN.local"])
         order_id = _order_id_from_finalize_url(order["finalize"])
 

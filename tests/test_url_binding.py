@@ -20,6 +20,7 @@ identically against the vulnerable and the fixed code.
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,7 @@ from acme_adcs_ra.server import ServerContext, create_app
 from acme_adcs_ra.store import Store
 
 from .hand_rolled_acme_client import (
+    JOSE_HEADERS,
     HandRolledAcmeClient,
     jwk_from_private_key,
     make_eab_jws,
@@ -45,7 +47,7 @@ from .hand_rolled_acme_client import (
 # The kid/MAC pair below IS in this RA's allowlist. The attack being modelled
 # is not a forged MAC — it is a legitimate credential minted against a
 # different deployment's URL being replayed here.
-KID = "kid-001"
+KID = "kid-001-0123456789abcdef"
 MAC_B64 = "c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE"
 
 # The RA's configured public identity...
@@ -103,7 +105,7 @@ def _new_account(client: TestClient, *, jws_url: str, eab_url: str) -> Any:
         key,
         {"alg": "ES256", "jwk": jwk, "nonce": nonce, "url": jws_url},
     )
-    return client.post("/acme/new-acct", json=body)
+    return client.post("/acme/new-acct", content=json.dumps(body), headers=JOSE_HEADERS)
 
 
 def test_new_account_signed_against_the_public_url_succeeds(
@@ -187,7 +189,7 @@ def test_authenticated_jws_url_must_name_the_configured_host(
             "url": f"{ROGUE_URL}/acme/new-order",
         },
     )
-    resp = client.post("/acme/new-order", json=body)
+    resp = client.post("/acme/new-order", content=json.dumps(body), headers=JOSE_HEADERS)
     assert resp.status_code == 400, resp.text
     assert "url host mismatch" in resp.json()["detail"]
 
@@ -209,7 +211,7 @@ def test_kid_from_another_deployment_is_rejected(client: TestClient) -> None:
             "url": f"{PUBLIC_URL}/acme/new-order",
         },
     )
-    resp = client.post("/acme/new-order", json=body)
+    resp = client.post("/acme/new-order", content=json.dumps(body), headers=JOSE_HEADERS)
     assert resp.status_code == 400, resp.text
     assert "not an account URL on this server" in resp.json()["detail"]
 
@@ -235,7 +237,7 @@ def test_scheme_is_pinned_to_the_configured_url(client: TestClient) -> None:
         },
     )
     resp = client.post(
-        "/acme/new-order", json=body, headers={"X-Forwarded-Proto": "http"}
+        "/acme/new-order", content=json.dumps(body), headers={**JOSE_HEADERS, "X-Forwarded-Proto": "http"}
     )
     assert resp.status_code == 400, resp.text
     assert "url scheme mismatch" in resp.json()["detail"]

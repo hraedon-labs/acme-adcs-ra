@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from acme_adcs_ra.acme_errors import (
     issuance_halted,
     malformed,
+    order_not_ready,
     rate_limited,
     rejected_identifier,
     unauthorized,
@@ -277,9 +278,15 @@ async def finalize_order(
     if expired_resp is not None:
         return expired_resp
 
+    # RFC 8555 §7.4: finalize on a not-ready order MUST be 403 orderNotReady
+    # (WI-033; it used to be malformed/400). ``valid`` and ``processing`` are
+    # answered above with the current order instead, deliberately: a retried
+    # finalize must never read as an error once issuance has happened or is
+    # under way, and the double-issuance guard depends on that path.
     if order.status != OrderStatus.READY:
-        raise malformed(
-            f"order is not ready for finalization (status={order.status})"
+        raise order_not_ready(
+            f"order is not ready for finalization (status={order.status}); "
+            f"POST-as-GET the order for its current state"
         )
 
     # Parse CSR, validate SANs, evaluate policy (while still 'ready').

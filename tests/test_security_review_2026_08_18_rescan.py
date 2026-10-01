@@ -63,7 +63,7 @@ def _insert_account(
     with sqlite3.connect(str(db_path)) as conn:
         conn.execute(
             "INSERT INTO accounts (id, status, jwk_json, eab_kid, contact, "
-            "created_at, jwk_thumbprint) VALUES (?, 'valid', ?, 'kid-001', '[]', "
+            "created_at, jwk_thumbprint) VALUES (?, 'valid', ?, 'kid-001-0123456789abcdef', '[]', "
             "'2026-08-18T00:00:00+00:00', ?)",
             (account_id, json.dumps(jwk), thumbprint),
         )
@@ -219,8 +219,8 @@ class TestTwinMigrationFailsClosed:
         """The invariant check runs on every start; it must be a no-op when clean."""
         db_path = tmp_path / "ra.db"
         store = Store(db_path)
-        first = store.create_account(jwk=_real_rsa_jwk(), eab_kid="kid-001")
-        second = store.create_account(jwk=_real_rsa_jwk(), eab_kid="kid-002")
+        first = store.create_account(jwk=_real_rsa_jwk(), eab_kid="kid-001-0123456789abcdef")
+        second = store.create_account(jwk=_real_rsa_jwk(), eab_kid="kid-002-0123456789abcdef")
 
         for _ in range(3):
             reopened = Store(db_path)

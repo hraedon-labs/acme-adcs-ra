@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from acme_adcs_ra.acme_errors import (
     bad_csr,
-    malformed,
+    order_not_ready,
     rejected_identifier,
     server_internal,
     unauthorized,
@@ -118,7 +118,7 @@ def _finalize_expired_order(
 
     Returns None if the order is not expired.
     Returns a JSONResponse if the CAS lost the race (return current state).
-    Raises malformed if the CAS applied (order is definitively expired).
+    Raises orderNotReady (403) if the CAS applied (order is definitively expired).
     """
     if not is_expired(order.expires):
         return None
@@ -131,8 +131,8 @@ def _finalize_expired_order(
             outcome="denied",
             details={"expires": order.expires},
         )
-        raise malformed(
-            f"order has expired (expires={order.expires}); "
+        raise order_not_ready(
+            f"order has expired (expires={order.expires}) and is now invalid; "
             f"create a new order to retry"
         )
     refreshed = _refresh_order_or_500(ctx, order_id, "during expiry check")
@@ -142,8 +142,8 @@ def _finalize_expired_order(
         return JSONResponse(
             content=_order_to_json(refreshed), headers={"Retry-After": "3"}
         )
-    raise malformed(
-        f"order has expired (expires={order.expires}); "
+    raise order_not_ready(
+        f"order has expired (expires={order.expires}) and is now invalid; "
         f"create a new order to retry"
     )
 

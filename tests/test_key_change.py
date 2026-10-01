@@ -27,8 +27,8 @@ def _make_config(tmp_path: Path) -> RAConfig:
         base_url="http://testserver",
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
-        eab_allowlist=[EABEntry(kid="kid-001", mac_key=mac_key_b64)],
-        san_scopes={"kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local"]}},
+        eab_allowlist=[EABEntry(kid="kid-001-0123456789abcdef", mac_key=mac_key_b64)],
+        san_scopes={"kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local"]}},
         max_accounts_per_eab_kid=2,
         adcs_template="ACME-ServerAuth",
         admin_token=SecretStr("test-admin-token-0123456789abcdef-32+"),
@@ -80,9 +80,9 @@ def acme_client(
     client: TestClient, config: RAConfig, old_key: rsa.RSAPrivateKey
 ) -> HandRolledAcmeClient:
     acme = HandRolledAcmeClient(client, "http://testserver", old_key)
-    mac_key = config.eab_key_bytes("kid-001")
+    mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
     assert mac_key is not None
-    resp = acme.new_account("kid-001", mac_key)
+    resp = acme.new_account("kid-001-0123456789abcdef", mac_key)
     assert resp.status_code == 201
     return acme
 
@@ -171,9 +171,9 @@ class TestKeyChangeRejects:
         _, store, _ = app_and_store
         other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         other_acme = HandRolledAcmeClient(client, "http://testserver", other_key)
-        mac_key = config.eab_key_bytes("kid-001")
+        mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
         assert mac_key is not None
-        assert other_acme.new_account("kid-001", mac_key).status_code == 201
+        assert other_acme.new_account("kid-001-0123456789abcdef", mac_key).status_code == 201
         assert other_acme.account_url is not None
         other_account = store.get_account(other_acme.account_url.rsplit("/", 1)[-1])
         assert other_account is not None
@@ -253,9 +253,9 @@ class TestKeyChangeRejects:
     ) -> None:
         other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         other_acme = HandRolledAcmeClient(client, "http://testserver", other_key)
-        mac_key = config.eab_key_bytes("kid-001")
+        mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
         assert mac_key is not None
-        other_acme.new_account("kid-001", mac_key)
+        other_acme.new_account("kid-001-0123456789abcdef", mac_key)
 
         resp = acme_client.key_change(other_key)
         assert resp.status_code == 400

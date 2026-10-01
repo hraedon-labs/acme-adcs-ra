@@ -43,10 +43,10 @@ def _make_test_config(tmp_path: Path) -> RAConfig:
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
         eab_allowlist=[
-            EABEntry(kid="kid-001", mac_key=mac_key_b64),
+            EABEntry(kid="kid-001-0123456789abcdef", mac_key=mac_key_b64),
         ],
         san_scopes={
-            "kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local", "srv01.WORK-DOMAIN.local"]},
+            "kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local", "srv01.WORK-DOMAIN.local"]},
         },
         adcs_template="ACME-ServerAuth",
     )
@@ -166,7 +166,7 @@ class TestSiemAuditEvents:
         account_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
 
-        resp = ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        resp = ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 201
 
         lines = config.siem_jsonl_path.read_text(encoding="utf-8").strip().splitlines()
@@ -185,7 +185,7 @@ class TestSiemAuditEvents:
         account_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
 
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order_resp = ac.new_order(["srv01.WORK-DOMAIN.local"])
         assert order_resp.status_code == 201
         order = order_resp.json()
@@ -232,7 +232,7 @@ class TestSiemAuditEvents:
         account_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
 
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order_resp = ac.new_order(["srv01.WORK-DOMAIN.local"])
         order = order_resp.json()
         for authz_url in order["authorizations"]:
@@ -288,7 +288,7 @@ class TestSiemStartupProbe:
         account_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         ac = HandRolledAcmeClient(client, config.base_url, account_key)
 
-        ac.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        ac.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         order_resp = ac.new_order(["srv01.WORK-DOMAIN.local"])
         order = order_resp.json()
         for authz_url in order["authorizations"]:

@@ -9,6 +9,7 @@ from acme_adcs_ra.acme_errors import malformed, server_internal, unauthorized
 from acme_adcs_ra.app_state import (
     ServerContext,
     _audit,
+    _url,
     authenticate_account,
     get_context,
 )
@@ -76,6 +77,14 @@ def _maybe_ready_order(ctx: ServerContext, order_id: str) -> None:
     ctx.store.transition_pending_to_ready(order_id)
 
 
+def _up_link(ctx: ServerContext, authz_id: str) -> dict[str, str]:
+    """RFC 8555 §7.1: the "up" link relation points a challenge at its
+    authorization (§7.5.1). acme-python (certbot) requires it on the challenge
+    response and aborts issuance without it ("up" Link header missing) — found
+    by the stock-client interop harness (WI-036)."""
+    return {"Link": f'<{_url(ctx, f"/acme/authz/{authz_id}")}>;rel="up"'}
+
+
 @router.post("/acme/challenge/{challenge_id}")
 async def post_challenge(
     challenge_id: str,
@@ -107,7 +116,9 @@ async def post_challenge(
     # that happened once. Return the current object; the original validation
     # keeps its row.
     if challenge.status == "valid":
-        return JSONResponse(content=_challenge_to_json(challenge))
+        return JSONResponse(
+            content=_challenge_to_json(challenge), headers=_up_link(ctx, authz.id)
+        )
 
     # ------------------------------------------------------------------
     # Enterprise trust decision point.
@@ -140,4 +151,6 @@ async def post_challenge(
         outcome="success",
         details={"challenge_id": challenge_id, "authz_id": authz.id},
     )
-    return JSONResponse(content=_challenge_to_json(refreshed_challenge))
+    return JSONResponse(
+        content=_challenge_to_json(refreshed_challenge), headers=_up_link(ctx, authz.id)
+    )

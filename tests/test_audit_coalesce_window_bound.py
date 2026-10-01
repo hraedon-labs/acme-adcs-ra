@@ -362,7 +362,7 @@ class TestTheKeyExcludesAttackerChosenData:
                 account_id="acct-1",
                 order_id="order-1",
                 details={
-                    "reason": f"SAN out of scope for kid kid-001: host{i}.evil.test",
+                    "reason": f"SAN out of scope for kid kid-001-0123456789abcdef: host{i}.evil.test",
                     "reason_code": "san-out-of-scope",
                 },
             )
@@ -414,12 +414,12 @@ class TestTheKeyExcludesAttackerChosenData:
             account_id="acct-1",
             order_id="order-1",
             details={
-                "reason": "SAN out of scope for kid kid-001: first.evil.test",
+                "reason": "SAN out of scope for kid kid-001-0123456789abcdef: first.evil.test",
                 "reason_code": "san-out-of-scope",
             },
         )
         details = json.loads(_rows(store)[0]["details"])
-        assert details["reason"] == "SAN out of scope for kid kid-001: first.evil.test"
+        assert details["reason"] == "SAN out of scope for kid kid-001-0123456789abcdef: first.evil.test"
 
     def test_a_call_site_without_a_reason_code_still_keys_on_reason(
         self, tmp_path: Path
@@ -558,7 +558,7 @@ class TestWindowInternalsAreBounded:
                 store,
                 event_type="account-creation-denied",
                 outcome="failed",
-                details={"reason": "unknown EAB kid", "kid": "kid-first"},
+                details={"reason": "unknown EAB kid", "kid": "kid-first-0123456789abcdef"},
             )
         details = json.loads(_rows(store)[0]["details"])
         assert details["kid_digests"] == []
@@ -691,7 +691,7 @@ def _build_env(tmp_path: Path) -> tuple[Any, Any]:
     return TestClient(create_app(ctx)), ctx
 
 
-_KID = "kid-001"
+_KID = "kid-001-0123456789abcdef"
 _MAC_B64 = "c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE"
 
 
