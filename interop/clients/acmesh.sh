@@ -15,4 +15,4 @@ step key-change $A --update-account-key
 step issue-after-key-change $A --issue -d acmesh2.interop.test -w /w/webroot --extended-key-usage serverAuth
 step revoke $A --revoke -d acmesh.interop.test --revoke-reason 1
 step deactivate-account $A --deactivate-account
-refused order-after-deactivate-refused "deactivated" $A --issue -d acmesh3.interop.test -w /w/webroot --extended-key-usage serverAuth --force
+refused order-after-deactivate-refused "account is deactivated" $A --issue -d acmesh3.interop.test -w /w/webroot --extended-key-usage serverAuth --force

@@ -121,9 +121,13 @@ wheel). Each client drives what it supports: directory, new-nonce,
 new-account (EAB), account update, new-order, authz POST-as-GET, challenge,
 finalize, order polling, certificate download, **keyChange**, revokeCert, and
 deactivation. The proxy burns the nonce of every Nth JWS POST before forwarding
-it, so **every run exercises each client's badNonce-retry path**. Output: one
+it, so **every injecting run (the default, and CI) exercises each client's
+badNonce-retry path**; the summary line reports how many injections happened. Output: one
 `RESULT <client> <step> PASS|FAIL|SKIP` line per step, transcripts under
-`$INTEROP_WORK/out` (proxy log = every request the client actually sent). CI
+`$INTEROP_WORK/out` (proxy log = every request the client actually sent).
+Transcripts include the run's throwaway EAB HMAC keys in client argv; they are
+random per run and bound to a fake CA, so the logs are safe to share, but they
+are not secret-free. CI
 runs it on every PR (`.github/workflows/interop.yml`).
 
 Coverage gaps, stated rather than implied: certbot has no keyChange; the lego

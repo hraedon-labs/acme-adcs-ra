@@ -3,7 +3,7 @@
 # The build context is the RA source tree under test; the harness files come
 # from a second named context, so the harness can drive any checkout:
 #   docker build -f interop/Dockerfile --build-context harness=interop <ra-tree>
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 WORKDIR /opt/ra
 COPY deploy/requirements.lock.txt /opt/ra/deploy/requirements.lock.txt
 RUN pip install --no-cache-dir --require-hashes -r deploy/requirements.lock.txt

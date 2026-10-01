@@ -35,7 +35,12 @@ from acme_adcs_ra.store import Store
 
 
 class HarnessSigningCA:
-    """An in-memory P-256 root that signs exactly what the CSR asks for."""
+    """An in-memory P-256 root that signs exactly what the CSR asks for.
+
+    NOT a faithful AD CS issuer: leaf shape (CN = first SAN, SKI/AKI, EKU) is
+    the minimum stock clients need. Nothing here is evidence about real-chain
+    shape; that is the lab re-proof's job (docs/live-reproof-runbook.md §A).
+    """
 
     def __init__(self) -> None:
         self._key = ec.generate_private_key(ec.SECP256R1())
@@ -50,6 +55,10 @@ class HarnessSigningCA:
             .not_valid_before(now - dt.timedelta(minutes=5))
             .not_valid_after(now + dt.timedelta(days=2))
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(self._key.public_key()),
+                critical=False,
+            )
             .add_extension(
                 x509.KeyUsage(
                     digital_signature=True, content_commitment=False,
@@ -90,6 +99,10 @@ class HarnessSigningCA:
                 x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False
             )
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(self._key.public_key()),
+                critical=False,
+            )
             .sign(self._key, hashes.SHA256())
         )
         return EnrollmentResult(

@@ -12,7 +12,8 @@
 # The clients reach the RA through interop/nonce_fault_proxy.py, which
 # terminates TLS and -- with INJECT_BAD_NONCE_EVERY=N (default 3) -- burns the
 # nonce of every Nth POST before forwarding it, so each client's badNonce-retry
-# path is exercised on every run. Set INJECT_BAD_NONCE_EVERY=0 for a clean run.
+# path is exercised on every injecting run (the default, and CI). Set
+# INJECT_BAD_NONCE_EVERY=0 for a clean run; the summary reports the count.
 #
 # Rule (AGENTS.md / item 31): a step where a stock client fails and the in-repo
 # hand-rolled client passes is a SERVER finding by default, not a client bug.
@@ -34,12 +35,15 @@ NET="$RUN_ID"
 RA_HOST="acme-ra.interop.test"
 DIRECTORY_URL="https://$RA_HOST/directory"
 
-# Client images, pinned by tag. Bump deliberately; a client upgrade that breaks
-# is exactly what this harness exists to notice.
-CERTBOT_IMAGE="${CERTBOT_IMAGE:-certbot/certbot:v5.8.0}"
-LEGO_IMAGE="${LEGO_IMAGE:-goacme/lego:v5.5.2}"
-ACMESH_IMAGE="${ACMESH_IMAGE:-neilpang/acme.sh:3.1.6}"
-PWSH_IMAGE="${PWSH_IMAGE:-mcr.microsoft.com/powershell:7.5-ubuntu-24.04}"
+# Client images, pinned by tag AND digest (a re-pushed tag must not change what
+# runs). Bump deliberately; a client upgrade that breaks is exactly what this
+# harness exists to notice. Posh-ACME itself comes from PSGallery at run time,
+# pinned by -RequiredVersion.
+CERTBOT_IMAGE="${CERTBOT_IMAGE:-certbot/certbot:v5.8.0@sha256:f70ad0adbb7e117f0fe42a63c553f28ea451edabc0148757b6efcd9735acaa20}"
+LEGO_IMAGE="${LEGO_IMAGE:-goacme/lego:v5.5.2@sha256:1944e8c36055beec47c7de6f15202b41128be75eea0ffa257f0c14d93c5155fd}"
+ACMESH_IMAGE="${ACMESH_IMAGE:-neilpang/acme.sh:3.1.6@sha256:ce1a90326f84652c740a75cf80428da92b6f239c55ea2dfffad85b1e59b96092}"
+PWSH_IMAGE="${PWSH_IMAGE:-mcr.microsoft.com/powershell:7.5-ubuntu-24.04@sha256:042240d57ec9e47e511033b92625a8d95875ee5860af3015992c248b58a8be81}"
+CLIENT_TIMEOUT="${CLIENT_TIMEOUT:-600}"   # seconds per client container
 POSH_ACME_VERSION="${POSH_ACME_VERSION:-4.34.0}"
 
 mkdir -p "$WORK"/{pki,out,data}
@@ -111,7 +115,7 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 if [ "${ready:-0}" != 1 ]; then
-    echo "RA did not come up"; docker logs "$RUN_ID-ra" | tail -40; exit 2
+    echo "RA did not come up"; { docker logs "$RUN_ID-ra" 2>&1 | tail -40; } || true; exit 2
 fi
 
 run_client() {
@@ -126,6 +130,7 @@ run_client() {
     mkdir -p "$WORK/w-$c"; chmod 0777 "$WORK/w-$c"
     local args=()
     [ "$entry" = pwsh ] && args=(-NoProfile -File)
+    timeout --kill-after=10 "$CLIENT_TIMEOUT" \
     docker run --rm --name "$RUN_ID-$c" --network "$NET" --entrypoint "$entry" \
         -v "$REPO/interop:/harness:ro" -v "$WORK/pki:/pki:ro" \
         -v "$WORK/w-$c:/w" -v "$WORK/out:/out" \

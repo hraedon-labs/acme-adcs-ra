@@ -25,6 +25,7 @@ import ssl
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import TextIO
 
 _HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -72,7 +73,7 @@ def _corrupt_signature(body: bytes) -> bytes | None:
     return json.dumps(jws).encode()
 
 
-def make_handler(upstream_host: str, upstream_port: int, state: _State, log: object) -> type:
+def make_handler(upstream_host: str, upstream_port: int, state: _State, log: TextIO) -> type:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -91,19 +92,21 @@ def make_handler(upstream_host: str, upstream_port: int, state: _State, log: obj
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None
             injected = False
-            if (
-                method == "POST"
+            # Decide corruptibility BEFORE taking an injection slot, so a
+            # non-JWS POST can never consume (and waste) the slot.
+            poisoned = (
+                _corrupt_signature(body)
+                if method == "POST"
                 and body
                 and self.path.startswith("/acme/")
                 and not self.path.startswith("/acme/admin/")
-                and state.should_inject()
-            ):
-                poisoned = _corrupt_signature(body)
-                if poisoned is not None:
-                    burn = self._upstream("POST", poisoned)
-                    burn.read()
-                    injected = True
-                    print(f"INJECT {self.path} burned nonce -> {burn.status}", file=log, flush=True)
+                else None
+            )
+            if poisoned is not None and state.should_inject():
+                burn = self._upstream("POST", poisoned)
+                burn.read()
+                injected = True
+                print(f"INJECT {self.path} burned nonce -> {burn.status}", file=log, flush=True)
             resp = self._upstream(method, body)
             payload = resp.read()
             print(

@@ -5,7 +5,7 @@
 #                                          refusal for the wrong reason is a FAIL)
 #   skip    <name> <why>                   the client cannot drive this endpoint
 CLIENT="${CLIENT:-unknown}"
-_out=/tmp/step.out
+_out="$(mktemp)"
 step() {
     name="$1"; shift
     echo "=== STEP $name: $*"
