@@ -211,7 +211,6 @@ class TestKeyChangeRejects:
         url = f"{acme_client.base_url}/acme/key-change"
         inner_protected = {
             "alg": "RS256",
-            "nonce": acme_client._nonce_for(),
             "url": f"{acme_client.base_url}/acme/wrong-url",
             "jwk": new_jwk,
         }
@@ -234,7 +233,6 @@ class TestKeyChangeRejects:
         url = f"{acme_client.base_url}/acme/key-change"
         inner_protected = {
             "alg": "RS256",
-            "nonce": acme_client._nonce_for(),
             "url": url,
             "jwk": new_jwk,
         }
@@ -285,7 +283,6 @@ class TestKeyChangeRejects:
         new_jwk = jwk_from_private_key(new_key)
         inner_protected = {
             "alg": "RS256",
-            "nonce": acme_client._nonce_for(),
             "url": url,
             "jwk": new_jwk,
         }

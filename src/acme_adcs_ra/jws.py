@@ -385,6 +385,21 @@ def _verify_hmac(
     return hmac.compare_digest(mac, signature)
 
 
+def require_flattened_without_unprotected_header(jws: dict[str, Any]) -> None:
+    """RFC 8555 §6.2: the JWS "MUST NOT have multiple signatures" and "the JWS
+    Unprotected Header MUST NOT be used". Verification reads only ``protected``,
+    so a ``header`` member was silently ignored — which let an inner keyChange
+    JWS carry a nonce the route says it refuses (Daybreak Blue, round 3).
+    """
+    if "header" in jws:
+        raise JWSValidationError("JWS Unprotected Header must not be used (RFC 8555 §6.2)")
+    if "signatures" in jws:
+        raise JWSValidationError(
+            "JWS must use the Flattened JSON Serialization with one signature "
+            "(RFC 8555 §6.2)"
+        )
+
+
 def verify_flattened_jws(
     jws: dict[str, Any],
     public_key: rsa.RSAPublicKey | ec.EllipticCurvePublicKey,
@@ -393,6 +408,7 @@ def verify_flattened_jws(
 
     Raises JWSValidationError on structural, algorithmic, or signature failure.
     """
+    require_flattened_without_unprotected_header(jws)
     protected_b64 = jws.get("protected")
     payload_b64 = jws.get("payload")
     signature_b64 = jws.get("signature")
@@ -474,6 +490,7 @@ def verify_eab_jws(
     The EAB JWS payload must equal the account JWK.  The MAC key is looked up
     by the kid in the protected header.
     """
+    require_flattened_without_unprotected_header(eab_jws)
     protected_b64 = eab_jws.get("protected")
     payload_b64 = eab_jws.get("payload")
     signature_b64 = eab_jws.get("signature")

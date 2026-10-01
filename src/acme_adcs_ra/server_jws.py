@@ -23,6 +23,7 @@ from acme_adcs_ra.jws import (
     _base64url_decode,
     _public_key_from_jwk,
     jwk_thumbprint,
+    require_flattened_without_unprotected_header,
     verify_flattened_jws,
 )
 from acme_adcs_ra.store import Store
@@ -144,6 +145,10 @@ async def _parse_jws_header(
     jws = await _parse_jws_body(
         request, max_body_size_bytes=max_body_size_bytes
     )
+    try:
+        require_flattened_without_unprotected_header(jws)
+    except JWSValidationError as exc:
+        raise malformed(str(exc)) from exc
     protected_b64 = jws.get("protected")
     if not isinstance(protected_b64, str):
         raise malformed("JWS missing protected header")
@@ -158,6 +163,9 @@ async def _parse_jws_header(
     # Consume nonce BEFORE verifying URL so that a bad-URL probe still
     # burns the nonce, limiting replay probing (M6).
     _consume_nonce(store, header, expected_url)
+    # Read by the Replay-Nonce middleware in server.py (item 28): a request
+    # that spent a nonce is owed one back in its response.
+    request.state.acme_nonce_consumed = True
     _verify_url(header, expected_url)
 
     return header, jws
