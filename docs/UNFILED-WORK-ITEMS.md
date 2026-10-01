@@ -1642,8 +1642,8 @@ unmeasurable: not un-measured, **un-measurABLE**.
 
 **Fix.**
 
-1. Add an explicit `certutil -config <CA> -CRL` to §E, after the revocation
-   loop.
+1. Add an explicit `certutil -config <CA> -CRL` after the harness's revocation
+   loop, and document the requirement in §E.
 2. **Make it evidence-bearing rather than asserted.** Re-fetch the CDP and
    assert both that the CRL Number advanced *and* that every serial the
    teardown just revoked is listed — with controls on both sides, because
