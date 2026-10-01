@@ -36,6 +36,11 @@ schema is `acme_adcs_ra` (underscores) — `--project acme-adcs-ra` is rejected
 by the name validator, which is worth knowing before concluding the store is
 down.
 
+**Re-checked 2026-09-05** — still blocked, same error, same six missing
+migrations `[45..50]`. Reads still work. Confirmed with the owner that
+`agent-notes` stays down pending the agent-operations-suite work, so this file
+remains the tracker; item 26 below was filed here rather than in the store.
+
 **Reconcile this file into regista once writes are restored, then delete it.**
 
 ---
@@ -1574,3 +1579,71 @@ Requirements the implementation must satisfy:
    cannot resolve them; they need an operator revoking by ReqID at the CA. They
    must not be folded into the recoverable class, and must not disappear from
    view because no automated path exists.
+
+---
+
+### 26. (bug, medium) — NEW 2026-09-05. **The teardown revokes at the CA but never republishes the CRL, so a session's revocations stay invisible to relying parties until the next scheduled publication — about a week on this CA**
+
+**Observed live, and only by accident.** While completing the §A.2
+independent-client record, one certificate was revoked and the CRL published.
+The CRL's entry count went **370 → 401**. One revocation, thirty-one new
+entries.
+
+The other thirty were `raproof-*` certificates that the **previous session's
+teardown** had revoked at the CA — 29 at `2026-09-05T02:40Z` and 1 at
+`04:26Z`, all reason `0x4 Superseded` — and never published. CRL 129 was
+published at `02:11Z`, *before* those revocations, and the sampler shows CRL
+Number 129 served continuously through `07:30Z`. They sat revoked-but-
+unpublished for ~5.5 hours and would have stayed that way until the next
+scheduled publication had this session not published for an unrelated reason.
+This CA has `CRLPeriod = 1 Week`, so on an on-time publication schedule the
+exposure approaches a week (longer if a scheduled publication is late —
+`docs/operations.md` treats `CRLPeriod` as the expected cadence, not a bound).
+
+**The teardown procedure never republishes.** Its revocation loop lives in
+the gitignored lab harness, and the committed runbook's teardown
+(`docs/live-reproof-runbook.md` §E: preserve the post-run store, then restore
+CA rights, tasks, store, dotenv and pool) contains no revocation or
+republication step at all. The validation-log entries for earlier rounds assert "revoked … and the CRL
+republished", a claim at least one round did not actually satisfy. That is the
+familiar shape: the step was believed done because the sentence describing it
+was written, and nothing checked.
+
+**Why this is not lab housekeeping.** A certificate the CA considers revoked
+but that no relying party can see as revoked is the gap this product's
+CRL-verified confirmation exists to make visible (the agent-reported
+`crl_published` flag records the same distinction, unverified); the default
+least-privilege path accepts it only until the next scheduled publication, and
+the teardown left it unrecorded and bounded only by the publication schedule. Leaving the lab in it also means
+the *next* session's CRL-evidence checks — `require_crl_evidence`, and the
+monotonic watermark's first-use baseline — run against a CRL that is silently
+missing the prior session's revocations. And it makes a cross-session claim
+about revocation latency unmeasurable from the RA's own evidence — this
+interval was recovered only from CA timestamps and the external sampler — in
+the same way item 22 made the CRL age unmeasurable.
+
+**Fix.**
+
+1. Add an explicit `certutil -config <CA> -CRL` after the harness's revocation
+   loop, and document the requirement in §E.
+2. **Make it evidence-bearing rather than asserted.** Re-fetch the CDP and
+   assert both that the CRL Number advanced *and* that every serial the
+   teardown just revoked is listed — with controls on both sides, because
+   absence proves nothing on its own: the just-revoked serials are the
+   positive control (a lookup that matches nothing reads them as absent and
+   fails), and a serial that must NOT be listed is the negative control (a
+   lookup that matches everything fails). A teardown step whose failure mode is silence needs the same
+   treatment §E already gives the preserve step: verify, do not assert.
+3. Note the interaction with `scripts/sample_crl_age.py`. A forced
+   republication truncates the current publication cycle. That **cannot**
+   corrupt the served-age floor — every age a truncated cycle serves is a
+   genuine served age, so it can never push the observed maximum above the
+   true one; it can only fail to reach it — but it does spend that
+   cycle as a clean natural observation. Worth saying out loud in the runbook so
+   a future session does not skip the republish to protect the sampler; the
+   trade is real but one-sided.
+
+**Cross-check performed:** the 31 rows were enumerated from the CA
+(`certutil -view -restrict "Disposition=21,RevokedEffectiveWhen>=…"`) and
+account exactly — 29 + 1 previous-session Superseded, plus 1 Unspecified from
+this session. `370 + 31 = 401`. Nothing in this run is unexplained.
