@@ -57,8 +57,8 @@ def _maybe_ready_order(ctx: ServerContext, order_id: str) -> None:
     if order.status != OrderStatus.PENDING:
         return
     # LOW-2: do not advance an already-expired order to 'ready'. The sweep and
-    # the finalize path both handle expired orders (finalize rejects with 410
-    # and flips to 'invalid'), so a transient 'ready' for an order whose
+    # the finalize path both handle expired orders (finalize rejects with 403
+    # orderNotReady and flips to 'invalid'), so a transient 'ready' for an order whose
     # 'expires' is already past serves no client and could only confuse a
     # polling client into a finalize that would correctly reject. Defense in
     # depth, not a state-machine correctness fix.

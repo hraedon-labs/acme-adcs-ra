@@ -257,6 +257,8 @@ def test_duplicate_content_type_fields_are_refused_in_either_order(
     )
     resp = client.post("/acme/new-order", content=body, headers=fields)
     assert resp.status_code == 415, resp.text
+    # Refused before the nonce was spent, as for a wrong single type.
+    assert client.post("/acme/new-order", content=body, headers=JOSE_HEADERS).status_code == 201
 
 
 def test_admin_json_endpoints_are_not_subject_to_the_jose_rule(tmp_path: Path) -> None:
@@ -325,6 +327,19 @@ def test_a_short_kid_that_already_has_accounts_is_grandfathered(
     assert any("GRANDFATHERED" in r.getMessage() for r in caplog.records)
     acme.http = TestClient(app2)
     assert acme.new_order([SAN]).status_code == 201
+
+
+def test_grandfathering_is_exact_match(tmp_path: Path) -> None:
+    """Re-declaring an in-use short kid with different case is a NEW kid."""
+    used = "lab-kid-01"
+    weak = _config_with_kid(tmp_path, used, allow_weak_credentials=True)
+    app, _store, _ctx = _make_app(weak)
+    acme = HandRolledAcmeClient(TestClient(app), BASE, ec.generate_private_key(ec.SECP256R1()))
+    mac = weak.eab_key_bytes(used)
+    assert mac is not None
+    assert acme.new_account(used, mac).status_code == 201
+    with pytest.raises(RuntimeError, match="LAB-KID-01"):
+        _make_app(_config_with_kid(tmp_path, used.upper()))
 
 
 def test_grandfathering_is_per_kid(tmp_path: Path) -> None:

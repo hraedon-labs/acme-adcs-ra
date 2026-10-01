@@ -109,7 +109,7 @@ is the precedent). Whether to conform is an owner decision, filed as WI-037.
 
 ## Mutation matrix
 
-New: `tests/test_rfc8555_conformance_2026_10_01.py` (29; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases in round 2). One mutation at a
+New: `tests/test_rfc8555_conformance_2026_10_01.py` (30; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases and an exact-match grandfathering test in round 2). One mutation at a
 time, against the fixed tree:
 
 | Mutation | Result |
@@ -126,6 +126,7 @@ time, against the fixed tree:
 | (round 2) comma refusal removed | 1 fails (`jose+json; charset=utf-8, text/plain`) |
 | kid floor not called | 3 fail |
 | grandfathering disabled | 1 fails |
+| (round 2) grandfathering made case-insensitive (store query + floor) | 1 fails |
 | `allow_weak_credentials` ignored | 3 fail |
 | `up` link missing on the replay branch | 1 fails |
 | floor lowered to 16 | 2 fail |
