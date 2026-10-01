@@ -1593,7 +1593,7 @@ Requirements the implementation must satisfy:
 
 ---
 
-### 26. (bug, medium) — NEW 2026-09-05. **The teardown revokes at the CA but never republishes the CRL, so a session's revocations stay invisible to relying parties for up to a week**
+### 26. (bug, medium) — NEW 2026-09-05. **The teardown revokes at the CA but never republishes the CRL, so a session's revocations stay invisible to relying parties until the next scheduled publication — about a week on this CA**
 
 > **FIXED 2026-09-05.** All three parts of the fix landed:
 > `docs/live-reproof-runbook.md` §E now requires the republish *and* an
@@ -1620,7 +1620,9 @@ published at `02:11Z`, *before* those revocations, and the sampler shows CRL
 Number 129 served continuously through `07:30Z`. They sat revoked-but-
 unpublished for ~5.5 hours and would have stayed that way until the next
 scheduled publication had this session not published for an unrelated reason.
-This CA has `CRLPeriod = 1 Week`, so worst-case exposure is close to a week.
+This CA has `CRLPeriod = 1 Week`, so on an on-time publication schedule the
+exposure approaches a week (longer if a scheduled publication is late —
+`docs/operations.md` treats `CRLPeriod` as the expected cadence, not a bound).
 
 **The teardown procedure never republishes.** Its revocation loop lives in
 the gitignored lab harness, and the committed runbook's teardown
@@ -1633,10 +1635,10 @@ was written, and nothing checked.
 
 **Why this is not lab housekeeping.** A certificate the CA considers revoked
 but that no relying party can see as revoked is the gap this product's
-revocation evidence (`crl_published`, CRL-verified confirmation) exists to make
-visible; the default least-privilege path accepts it only until the next
-scheduled publication, and the teardown left it unrecorded and unbounded by
-anything but `CRLPeriod`. Leaving the lab in it also means
+CRL-verified confirmation exists to make visible (the agent-reported
+`crl_published` flag records the same distinction, unverified); the default
+least-privilege path accepts it only until the next scheduled publication, and
+the teardown left it unrecorded and bounded only by the publication schedule. Leaving the lab in it also means
 the *next* session's CRL-evidence checks — `require_crl_evidence`, and the
 monotonic watermark's first-use baseline — run against a CRL that is silently
 missing the prior session's revocations. And it makes a cross-session claim
