@@ -1598,10 +1598,11 @@ unpublished for ~5.5 hours and would have stayed that way until the next
 scheduled publication had this session not published for an unrelated reason.
 This CA has `CRLPeriod = 1 Week`, so worst-case exposure is close to a week.
 
-**Nothing written down says to republish.** The revocation loop lives in the
-gitignored lab harness, not in the committed runbook — `docs/live-reproof-runbook.md`
-§E covers only the restore (CA rights, tasks, store, dotenv, pool) — and neither
-of them republishes the CRL. The validation-log entries for earlier rounds assert "revoked … and the CRL
+**The teardown procedure never republishes.** Its revocation loop lives in
+the gitignored lab harness, and the committed runbook's teardown
+(`docs/live-reproof-runbook.md` §E: preserve the post-run store, then restore
+CA rights, tasks, store, dotenv and pool) contains no revocation or
+republication step at all. The validation-log entries for earlier rounds assert "revoked … and the CRL
 republished", a claim at least one round did not actually satisfy. That is the
 familiar shape: the step was believed done because the sentence describing it
 was written, and nothing checked.
