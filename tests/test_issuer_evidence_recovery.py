@@ -362,9 +362,21 @@ class TestCandidateSelection:
         class _Ctx:
             pass
 
+        requested: list[int] = []
+        real_list = store.list_certificate_chains
+
+        def _spy(*, limit: int = 1000) -> list[tuple[str, list[str]]]:
+            requested.append(limit)
+            return real_list(limit=limit)
+
+        monkeypatch.setattr(store, "list_certificate_chains", _spy)
         ctx = _Ctx()
         ctx.store = store  # type: ignore[attr-defined]
         admin._recover_issuer_evidence(ctx, orphan)  # type: ignore[arg-type]
+        # The contract itself, not just its effect at a small bound: with the
+        # store's own default (1000) equal to the real bound, the effect-only
+        # assertions below pass at bound 2 even if the +1 is dropped.
+        assert requested == [3]
         assert len(audits) == 1
         assert audits[0]["details"]["scan_truncated"] is True
         assert audits[0]["details"]["chains_scanned"] == 2

@@ -30,7 +30,11 @@ and still current (``nextUpdate`` in the future). Without those checks any
 parseable document listing the serials - a CRL from another CA, an expired one,
 one signed by nobody in particular - printed the verified banner (2026-10-01
 cross-lineage review of PR #18). An entry whose reason is ``removeFromCRL`` is
-the *un*-revoke marker, not a revocation, and is not counted as listed.
+the *un*-revoke marker, not a revocation, and is not counted as listed. A second
+review round added: ``--issuer`` must be exactly one CA certificate able to sign
+CRLs; ``thisUpdate`` may not be in the future (5 minutes' skew); an indirect CRL,
+a CRL scoped away from end-entity certificates, an entry naming another issuer,
+and any critical extension this script does not understand are all refused.
 
 **Controls, because absence proves nothing on its own.** A CRL lookup that
 matches nothing returns exactly what a correct negative returns. Two controls
@@ -84,7 +88,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -93,6 +97,14 @@ from cryptography.x509.oid import ExtensionOID
 
 DEFAULT_MAX_BYTES = 32 * 1024 * 1024
 DEFAULT_TIMEOUT = 30.0
+# Tolerated clock skew for a thisUpdate slightly ahead of this host's clock.
+CLOCK_SKEW = timedelta(minutes=5)
+# CRL extensions this verifier understands well enough to accept as critical.
+# Anything else marked critical makes the document uninterpretable here
+# (RFC 5280 section 5.2), so it is refused rather than read past.
+_UNDERSTOOD_CRITICAL = frozenset(
+    {ExtensionOID.ISSUING_DISTRIBUTION_POINT, ExtensionOID.DELTA_CRL_INDICATOR}
+)
 _HEX = re.compile(r"\A[0-9A-Fa-f]+\Z")
 
 
@@ -147,12 +159,51 @@ def load_crl(body: bytes) -> x509.CertificateRevocationList:
 
 
 def load_issuer(body: bytes) -> x509.Certificate:
-    for loader in (x509.load_der_x509_certificate, x509.load_pem_x509_certificate):
+    """Exactly one certificate, and it must be able to sign a CRL.
+
+    A multi-certificate PEM is refused rather than reduced to its first entry,
+    which for a saved chain is usually the wrong one and surfaces as a puzzling
+    issuer mismatch.
+    """
+    try:
+        certificates = [x509.load_der_x509_certificate(body)]
+    except ValueError:
         try:
-            return loader(body)
+            certificates = x509.load_pem_x509_certificates(body)
         except ValueError:
-            continue
-    raise RuntimeError("issuer file is neither a DER nor a PEM certificate")
+            raise RuntimeError(
+                "issuer file is neither a DER nor a PEM certificate"
+            ) from None
+    if len(certificates) != 1:
+        raise RuntimeError(
+            f"issuer file holds {len(certificates)} certificates; pass exactly "
+            "the issuing CA certificate"
+        )
+    issuer = certificates[0]
+    if not _can_sign_crls(issuer):
+        raise RuntimeError(
+            "issuer certificate is not a CA able to sign CRLs (needs "
+            "BasicConstraints CA=true, and cRLSign when KeyUsage is present)"
+        )
+    return issuer
+
+
+def _can_sign_crls(certificate: x509.Certificate) -> bool:
+    try:
+        constraints = certificate.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        ).value
+    except (x509.ExtensionNotFound, ValueError):
+        return False
+    if not constraints.ca:
+        return False
+    try:
+        usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
+    except x509.ExtensionNotFound:
+        return True
+    except ValueError:
+        return False
+    return bool(usage.crl_sign)
 
 
 def _is_remove_from_crl(entry: x509.RevokedCertificate) -> bool:
@@ -218,6 +269,35 @@ def check(
             "this is a delta CRL; membership in a delta is not publication in "
             "the base CRL relying parties fetch - point at the base CRL"
         )
+    for extension in crl.extensions:
+        if extension.critical and extension.oid not in _UNDERSTOOD_CRITICAL:
+            failures.append(
+                f"CRL carries a critical extension this verifier does not "
+                f"understand ({extension.oid.dotted_string}); it cannot be "
+                "interpreted safely"
+            )
+    try:
+        idp = crl.extensions.get_extension_for_class(
+            x509.IssuingDistributionPoint
+        ).value
+    except x509.ExtensionNotFound:
+        pass
+    else:
+        if idp.indirect_crl:
+            failures.append(
+                "this is an indirect CRL; its entries can belong to other CAs, "
+                "so a serial match does not attribute a revocation to --issuer"
+            )
+        if idp.only_contains_ca_certs or idp.only_contains_attribute_certs:
+            failures.append(
+                "this CRL's scope excludes end-entity certificates, so it is not "
+                "the CRL relying parties check for them"
+            )
+    if crl.last_update_utc > now + CLOCK_SKEW:
+        failures.append(
+            f"CRL thisUpdate {crl.last_update_utc.isoformat()} is in the future: "
+            "a document not yet in force is not evidence of a publication"
+        )
     if crl.next_update_utc is None:
         failures.append("CRL carries no nextUpdate, so its currency cannot be shown")
     elif crl.next_update_utc <= now:
@@ -254,6 +334,19 @@ def check(
     # removeFromCRL is the un-revoke marker (it appears in delta CRLs); an entry
     # carrying it says the certificate is NOT revoked, so it must not count.
     listed = {entry.serial_number for entry in crl if not _is_remove_from_crl(entry)}
+    for entry in crl:
+        # Entry-level: a certificateIssuer entry (indirect CRL) names another
+        # CA, and any other critical entry extension is uninterpretable here.
+        for extension in entry.extensions:
+            if extension.critical or extension.oid == (
+                x509.oid.CRLEntryExtensionOID.CERTIFICATE_ISSUER
+            ):
+                failures.append(
+                    f"CRL entry {entry.serial_number:X} carries "
+                    f"{extension.oid.dotted_string} (critical or certificateIssuer); "
+                    "it cannot be attributed to --issuer safely"
+                )
+                break
 
     for serial in revoked:
         if serial in listed:

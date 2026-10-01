@@ -223,8 +223,11 @@ because the sentence describing it was written, and nothing checked. So:
    published *after* the revocations rather than a cached pre-revocation CRL
    (its number must be strictly greater). Both controls are required with
    `--revoked`. Before any of that, the CRL must name `--issuer` as its issuer,
-   verify under its key, be a base CRL (not a delta) and be unexpired; a
-   `removeFromCRL` entry does not count as listed.
+   verify under its key, be a base CRL (not a delta, not indirect), be in force
+   (thisUpdate not in the future, nextUpdate not passed) and carry no critical
+   extension the script does not understand; `--issuer` must be one CA
+   certificate able to sign CRLs; a `removeFromCRL` entry does not count as
+   listed.
    An unreachable CDP exits **2**, distinct from the **1** that means "checked,
    and the serials are not there": a transport failure is no evidence either
    way and must not be recorded as either verdict.

@@ -74,9 +74,20 @@ def ca() -> tuple[rsa.RSAPrivateKey, x509.Name]:
     return key, name
 
 
-def _ca_cert(ca: tuple[rsa.RSAPrivateKey, x509.Name]) -> bytes:
+def _ca_cert(
+    ca: tuple[rsa.RSAPrivateKey, x509.Name],
+    *,
+    is_ca: bool = True,
+    crl_sign: bool | None = True,
+) -> bytes:
+    """The issuing CA certificate, ADCS-shaped by default.
+
+    ADCS CA certificates carry critical BasicConstraints CA=true and critical
+    KeyUsage digitalSignature + keyCertSign + cRLSign. ``crl_sign=None`` omits
+    KeyUsage entirely.
+    """
     key, name = ca
-    cert = (
+    builder = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
@@ -84,10 +95,19 @@ def _ca_cert(ca: tuple[rsa.RSAPrivateKey, x509.Name]) -> bytes:
         .serial_number(1)
         .not_valid_before(_NOW - datetime.timedelta(days=1))
         .not_valid_after(_NOW + datetime.timedelta(days=365))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(key, hashes.SHA256())
+        .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None), critical=True)
     )
-    return cert.public_bytes(serialization.Encoding.PEM)
+    if crl_sign is not None:
+        builder = builder.add_extension(
+            x509.KeyUsage(
+                digital_signature=True, content_commitment=False,
+                key_encipherment=False, data_encipherment=False,
+                key_agreement=False, key_cert_sign=True, crl_sign=crl_sign,
+                encipher_only=False, decipher_only=False,
+            ),
+            critical=True,
+        )
+    return builder.sign(key, hashes.SHA256()).public_bytes(serialization.Encoding.PEM)
 
 
 _CONTROLS = ("--absent", "5AFF", "--prior-crl-number", "130")
@@ -104,9 +124,12 @@ def _crl(
     issuer_name: x509.Name | None = None,
     delta_of: int | None = None,
     remove_from_crl: tuple[int, ...] = (),
+    this_update: datetime.datetime | None = None,
+    extra_extensions: tuple[tuple[x509.ExtensionType, bool], ...] = (),
+    entry_issuer: tuple[int, ...] = (),
 ) -> bytes:
     key, name = ca
-    last = _NOW - datetime.timedelta(hours=age_hours)
+    last = this_update or (_NOW - datetime.timedelta(hours=age_hours))
     builder = (
         x509.CertificateRevocationListBuilder()
         .issuer_name(issuer_name or name)
@@ -117,11 +140,18 @@ def _crl(
         builder = builder.add_extension(x509.CRLNumber(number), critical=False)
     if delta_of is not None:
         builder = builder.add_extension(x509.DeltaCRLIndicator(delta_of), critical=True)
+    for extension, critical in extra_extensions:
+        builder = builder.add_extension(extension, critical=critical)
     for serial in serials:
         entry = x509.RevokedCertificateBuilder().serial_number(serial).revocation_date(last)
         if serial in remove_from_crl:
             entry = entry.add_extension(
                 x509.CRLReason(x509.ReasonFlags.remove_from_crl), critical=False
+            )
+        if serial in entry_issuer:
+            other = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "OTHER-CA")])
+            entry = entry.add_extension(
+                x509.CertificateIssuer([x509.DirectoryName(other)]), critical=True
             )
         builder = builder.add_revoked_certificate(entry.build())
     return builder.sign(signer or key, hashes.SHA256()).public_bytes(
@@ -371,3 +401,98 @@ class TestAuthenticity:
         assert rc == 2
         assert "requires at least one" in captured.err
         assert "CRL-PUBLICATION-VERIFIED" not in captured.out
+
+
+class TestInterpretability:
+    """Second review round (2026-10-01): documents that verify but do not prove."""
+
+    def _expect_fail(
+        self, verifier: ModuleType, tmp_path: Path,
+        ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str], body: bytes, needle: str,
+    ) -> None:
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS, ca=ca)
+        captured = capsys.readouterr()
+        assert rc == 1
+        assert needle in captured.err
+        assert "CRL-PUBLICATION-VERIFIED" not in captured.out
+
+    def test_a_future_dated_crl_fails(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        body = _crl(ca, number=131, serials=[0x5A01],
+                    this_update=_NOW + datetime.timedelta(hours=24))
+        self._expect_fail(verifier, tmp_path, ca, capsys, body, "in the future")
+
+    def test_an_indirect_crl_fails(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        idp = x509.IssuingDistributionPoint(
+            full_name=None, relative_name=None, only_contains_user_certs=False,
+            only_contains_ca_certs=False, only_some_reasons=None,
+            indirect_crl=True, only_contains_attribute_certs=False,
+        )
+        body = _crl(ca, number=131, serials=[0x5A01], extra_extensions=((idp, True),))
+        self._expect_fail(verifier, tmp_path, ca, capsys, body, "indirect CRL")
+
+    def test_an_entry_naming_another_issuer_fails(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        body = _crl(ca, number=131, serials=[0x5A01], entry_issuer=(0x5A01,))
+        self._expect_fail(verifier, tmp_path, ca, capsys, body, "cannot be attributed")
+
+    def test_an_unknown_critical_extension_fails(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        unknown = x509.UnrecognizedExtension(
+            x509.ObjectIdentifier("1.3.6.1.4.1.99999.1"), b"\x05\x00"
+        )
+        body = _crl(ca, number=131, serials=[0x5A01], extra_extensions=((unknown, True),))
+        self._expect_fail(verifier, tmp_path, ca, capsys, body, "does not understand")
+
+    def test_an_unknown_non_critical_extension_is_fine(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+    ) -> None:
+        """ADCS adds non-critical Microsoft extensions (CA Version, Next CRL Publish)."""
+        unknown = x509.UnrecognizedExtension(
+            x509.ObjectIdentifier("1.3.6.1.4.1.311.21.1"), b"\x02\x01\x00"
+        )
+        body = _crl(ca, number=131, serials=[0x5A01], extra_extensions=((unknown, False),))
+        assert _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS, ca=ca) == 0
+
+    @pytest.mark.parametrize(
+        ("is_ca", "crl_sign"), [(False, True), (True, False)],
+        ids=["not-a-ca", "no-crl-sign"],
+    )
+    def test_an_issuer_that_cannot_sign_crls_is_refused(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str], is_ca: bool, crl_sign: bool,
+    ) -> None:
+        body = _crl(ca, number=131, serials=[0x5A01])
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                  issuer_pem=_ca_cert(ca, is_ca=is_ca, crl_sign=crl_sign))
+        captured = capsys.readouterr()
+        assert rc == 2
+        assert "not a CA able to sign CRLs" in captured.err
+        assert "CRL-PUBLICATION-VERIFIED" not in captured.out
+
+    def test_an_issuer_without_key_usage_is_accepted(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+    ) -> None:
+        body = _crl(ca, number=131, serials=[0x5A01])
+        assert _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                    issuer_pem=_ca_cert(ca, crl_sign=None)) == 0
+
+    def test_a_multi_certificate_issuer_file_is_refused(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        body = _crl(ca, number=131, serials=[0x5A01])
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                  issuer_pem=_ca_cert(ca) + _ca_cert(ca))
+        assert rc == 2
+        assert "holds 2 certificates" in capsys.readouterr().err
