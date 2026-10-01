@@ -101,9 +101,13 @@ DEFAULT_TIMEOUT = 30.0
 CLOCK_SKEW = timedelta(minutes=5)
 # CRL extensions this verifier understands well enough to accept as critical.
 # Anything else marked critical makes the document uninterpretable here
-# (RFC 5280 section 5.2), so it is refused rather than read past.
-_UNDERSTOOD_CRITICAL = frozenset(
-    {ExtensionOID.ISSUING_DISTRIBUTION_POINT, ExtensionOID.DELTA_CRL_INDICATOR}
+# (RFC 5280 section 5.2), so it is refused rather than read past. That includes
+# a critical CRLNumber or AuthorityKeyIdentifier, which RFC 5280 says MUST be
+# non-critical and ADCS marks non-critical; DeltaCRLIndicator is refused
+# outright by its own check below.
+_UNDERSTOOD_CRITICAL = frozenset({ExtensionOID.ISSUING_DISTRIBUTION_POINT})
+_PEM_CERT = re.compile(
+    rb"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.DOTALL
 )
 _HEX = re.compile(r"\A[0-9A-Fa-f]+\Z")
 
@@ -168,6 +172,14 @@ def load_issuer(body: bytes) -> x509.Certificate:
     try:
         certificates = [x509.load_der_x509_certificate(body)]
     except ValueError:
+        # PEM must be ONLY certificate blocks: the PEM loader skips anything
+        # between them, so a trailing DER certificate (or any other bytes)
+        # would otherwise be dropped without a word.
+        if _PEM_CERT.sub(b"", body).strip():
+            raise RuntimeError(
+                "issuer file is neither one DER certificate nor PEM certificate "
+                "blocks only"
+            ) from None
         try:
             certificates = x509.load_pem_x509_certificates(body)
         except ValueError:
@@ -180,6 +192,13 @@ def load_issuer(body: bytes) -> x509.Certificate:
             "the issuing CA certificate"
         )
     issuer = certificates[0]
+    now = datetime.now(UTC)
+    if not issuer.not_valid_before_utc <= now <= issuer.not_valid_after_utc:
+        raise RuntimeError(
+            f"issuer certificate is not currently valid (valid "
+            f"{issuer.not_valid_before_utc.isoformat()} to "
+            f"{issuer.not_valid_after_utc.isoformat()})"
+        )
     if not _can_sign_crls(issuer):
         raise RuntimeError(
             "issuer certificate is not a CA able to sign CRLs (needs "
@@ -287,6 +306,11 @@ def check(
             failures.append(
                 "this is an indirect CRL; its entries can belong to other CAs, "
                 "so a serial match does not attribute a revocation to --issuer"
+            )
+        if idp.only_some_reasons:
+            failures.append(
+                "this CRL is scoped to some revocation reasons only, so it can "
+                "be silent about a revocation for any other reason"
             )
         if idp.only_contains_ca_certs or idp.only_contains_attribute_certs:
             failures.append(

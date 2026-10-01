@@ -496,3 +496,67 @@ class TestInterpretability:
                   issuer_pem=_ca_cert(ca) + _ca_cert(ca))
         assert rc == 2
         assert "holds 2 certificates" in capsys.readouterr().err
+
+
+class TestThirdRound:
+    """Third review round (2026-10-01)."""
+
+    def test_a_reason_scoped_crl_fails(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        idp = x509.IssuingDistributionPoint(
+            full_name=None, relative_name=None, only_contains_user_certs=False,
+            only_contains_ca_certs=False,
+            only_some_reasons=frozenset({x509.ReasonFlags.key_compromise}),
+            indirect_crl=False, only_contains_attribute_certs=False,
+        )
+        body = _crl(ca, number=131, serials=[0x5A01], extra_extensions=((idp, True),))
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS, ca=ca)
+        assert rc == 1
+        assert "some revocation reasons only" in capsys.readouterr().err
+
+    def test_a_full_name_only_idp_still_verifies(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+    ) -> None:
+        """ADCS can publish a critical IDP carrying only the CDP's fullName."""
+        idp = x509.IssuingDistributionPoint(
+            full_name=[x509.UniformResourceIdentifier("http://ca.example/ca.crl")],
+            relative_name=None, only_contains_user_certs=False,
+            only_contains_ca_certs=False, only_some_reasons=None,
+            indirect_crl=False, only_contains_attribute_certs=False,
+        )
+        body = _crl(ca, number=131, serials=[0x5A01], extra_extensions=((idp, True),))
+        assert _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS, ca=ca) == 0
+
+    def test_pem_followed_by_der_is_refused(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        pem = _ca_cert(ca)
+        der = x509.load_pem_x509_certificate(pem).public_bytes(serialization.Encoding.DER)
+        body = _crl(ca, number=131, serials=[0x5A01])
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                  issuer_pem=pem + der)
+        assert rc == 2
+        assert "PEM certificate blocks only" in capsys.readouterr().err
+
+    def test_an_expired_issuer_certificate_is_refused(
+        self, verifier: ModuleType, tmp_path: Path, ca: tuple[rsa.RSAPrivateKey, x509.Name],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        key, name = ca
+        expired = (
+            x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(2)
+            .not_valid_before(_NOW - datetime.timedelta(days=30))
+            .not_valid_after(_NOW - datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .sign(key, hashes.SHA256())
+        ).public_bytes(serialization.Encoding.PEM)
+        body = _crl(ca, number=131, serials=[0x5A01])
+        rc = _run(verifier, body, tmp_path, "--revoked", "5A01", *_CONTROLS,
+                  issuer_pem=expired)
+        assert rc == 2
+        assert "not currently valid" in capsys.readouterr().err
