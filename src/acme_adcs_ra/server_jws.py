@@ -23,6 +23,7 @@ from acme_adcs_ra.jws import (
     _base64url_decode,
     _public_key_from_jwk,
     jwk_thumbprint,
+    require_flattened_without_unprotected_header,
     verify_flattened_jws,
 )
 from acme_adcs_ra.store import Store
@@ -144,6 +145,10 @@ async def _parse_jws_header(
     jws = await _parse_jws_body(
         request, max_body_size_bytes=max_body_size_bytes
     )
+    try:
+        require_flattened_without_unprotected_header(jws)
+    except JWSValidationError as exc:
+        raise malformed(str(exc)) from exc
     protected_b64 = jws.get("protected")
     if not isinstance(protected_b64, str):
         raise malformed("JWS missing protected header")

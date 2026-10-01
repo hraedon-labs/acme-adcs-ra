@@ -29,6 +29,7 @@ from acme_adcs_ra.jws import (
     _base64url_decode,
     _public_key_from_jwk,
     jwk_thumbprint,
+    require_flattened_without_unprotected_header,
     verify_flattened_jws,
 )
 from acme_adcs_ra.serializers import _account_to_json
@@ -58,6 +59,12 @@ async def key_change(
     inner_jws = outer_payload
     if not isinstance(inner_jws, dict) or "protected" not in inner_jws:
         raise malformed("keyChange payload must be an inner JWS object")
+    # The nonce/kid refusals below read the protected header only; an
+    # unprotected "header" member would otherwise smuggle either past them.
+    try:
+        require_flattened_without_unprotected_header(inner_jws)
+    except JWSValidationError as exc:
+        raise malformed(f"inner JWS: {exc}") from exc
 
     try:
         inner_header = json.loads(_base64url_decode(inner_jws["protected"]))

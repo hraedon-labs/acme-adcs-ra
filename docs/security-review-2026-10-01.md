@@ -33,6 +33,13 @@ also omits the inner nonce, per its source; not run here.
 - `HandRolledAcmeClient.key_change()` and two hand-built tests stop sending an
   inner nonce.
 
+**Unprotected header (Daybreak Blue, round 3).** Verification only ever reads
+`protected`, so a flattened-JWS `header` member was silently ignored — an inner
+JWS could carry `{"header": {"nonce": …}}` past the refusal above. RFC 8555
+§6.2 says the unprotected header MUST NOT be used and a JWS MUST NOT carry
+multiple signatures; `header` and `signatures` are now refused (`malformed`)
+on the outer JWS, the keyChange inner JWS, and the EAB JWS.
+
 **Replay analysis.** The whole request is single-use (the outer nonce); the
 inner JWS binds `url` (equal to the outer `url`) and `account` (equal to the
 outer `kid`); and while the old key is not the account's current key, a
@@ -110,9 +117,9 @@ type and status are unchanged.
 
 ## Tests and mutation matrix
 
-New: `tests/test_key_change_rfc8555.py` (7), `tests/test_replay_nonce_rfc8555.py`
+New: `tests/test_key_change_rfc8555.py` (10), `tests/test_replay_nonce_rfc8555.py`
 (14). Each mutation below was applied alone against the final tree and both
-files (21 tests) re-run; the whole matrix was re-measured after round 3, since
+files (21 tests; 24 after round 3's unprotected-header tests) re-run; the whole matrix was re-measured after round 3, since
 earlier rows had drifted as the design moved.
 
 | Mutation | Result |
@@ -132,6 +139,7 @@ earlier rows had drifted as the design moved.
 | badNonce failed mint not converted to `rateLimited` | 1 fails |
 | badNonce sent without the nonce it minted | 2 fail |
 | nonce-less badNonce allowed (no `rateLimited` conversion) | 2 fail |
+| (round 3) unprotected `header` member no longer refused | 2 fail (inner and outer) |
 
 Round 1 (DeepSeek) reported 5/6 for the first row from a hand-written
 approximation of the old route; it does not reproduce against the real file.

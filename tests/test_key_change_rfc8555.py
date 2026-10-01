@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from fastapi.testclient import TestClient
 
@@ -222,3 +223,40 @@ def test_captured_inner_jws_is_valid_again_after_a_b_a(tmp_path: Path) -> None:
     resp = _post(client, _outer_jws(client, acme, captured))
     assert resp.status_code == 200, resp.text
     assert _stored_thumbprint(store, acme) == jwk_thumbprint(jwk_from_private_key(key_b))
+
+
+def test_inner_jws_with_an_unprotected_header_is_refused(tmp_path: Path) -> None:
+    """Daybreak Blue round 3: a flattened JWS 'header' member was ignored, so an
+    inner nonce could ride there past the protected-header refusal."""
+    client, store, acme = _setup(tmp_path)
+    before = _stored_thumbprint(store, acme)
+    inner = dict(_inner_jws(acme, ec.generate_private_key(ec.SECP256R1())))
+    inner["header"] = {"nonce": _fresh_nonce(client)}  # type: ignore[assignment]
+
+    resp = _post(client, _outer_jws(client, acme, inner))
+
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:malformed"
+    assert _stored_thumbprint(store, acme) == before
+
+
+@pytest.mark.parametrize("member", ["header", "signatures"])
+def test_outer_jws_must_be_flattened_without_unprotected_header(
+    tmp_path: Path, member: str
+) -> None:
+    client, _store, acme = _setup(tmp_path)
+    body: dict[str, Any] = dict(
+        sign_jws(
+            {"identifiers": [{"type": "dns", "value": "srv01.WORK-DOMAIN.local"}]},
+            acme.account_key,
+            {"alg": "RS256", "kid": acme.account_url, "nonce": _fresh_nonce(client),
+             "url": f"{BASE}/acme/new-order"},
+        )
+    )
+    body[member] = {"x": 1} if member == "header" else []
+    resp = client.post(
+        "/acme/new-order", content=json.dumps(body),
+        headers={"Content-Type": "application/jose+json"},
+    )
+    assert resp.status_code == 400, resp.text
+    assert resp.json()["type"] == "urn:ietf:params:acme:error:malformed"
