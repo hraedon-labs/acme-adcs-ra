@@ -126,7 +126,11 @@ class ReplayNonceMiddleware:
     async def _mint(self) -> str | None:
         try:
             return await run_in_threadpool(self.context.store.create_nonce)
-        except (sqlite3.Error, OSError):
+        # Deliberately broad (like emit_audit_hook): this runs after the
+        # request's effects have committed — e.g. an irreversible key rollover
+        # — so ANY failure here must cost only the header, never turn a
+        # completed operation into a 500 (DeepSeek, round 6).
+        except Exception:  # noqa: BLE001
             logger.exception("could not mint a Replay-Nonce for an ACME response")
             return None
 

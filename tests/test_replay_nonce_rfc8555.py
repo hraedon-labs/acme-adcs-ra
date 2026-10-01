@@ -228,7 +228,8 @@ def test_a_failed_mint_does_not_turn_a_completed_post_into_a_500(
     nonce = _fresh(client)
 
     def unwritable() -> str:
-        raise sqlite3.OperationalError("attempt to write a readonly database")
+        # Not a sqlite3.Error: the guard must hold for any exception (r6).
+        raise RuntimeError("unexpected failure in the store")
 
     monkeypatch.setattr(store, "create_nonce", unwritable)
     resp = _post(client, "/acme/new-order", _new_order_body(acme, nonce))
