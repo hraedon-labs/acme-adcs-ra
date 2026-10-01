@@ -300,6 +300,76 @@ class TestCandidateSelection:
         assert outcome.rows_scanned == 2
 
 
+    def test_a_non_ca_certificate_is_not_issuer_material(self) -> None:
+        """Right DN, right key, but no CA=true: not a candidate (2026-10-01).
+
+        The leaf's signature already pins which key verifies a CRL, so this is
+        defence in depth rather than a key substitution: it keeps a non-CA
+        certificate out of the recovered chain and the audit record.
+        """
+        ca = Ca()
+        leaf = ca.issue(0x6767)
+        impostor = (
+            x509.CertificateBuilder()
+            .subject_name(ca.name)
+            .issuer_name(ca.name)
+            .public_key(ca.key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(_NOW - datetime.timedelta(days=1))
+            .not_valid_after(_NOW + datetime.timedelta(days=365))
+            .add_extension(
+                x509.BasicConstraints(ca=False, path_length=None), critical=True
+            )
+            .sign(ca.key, hashes.SHA256())
+        )
+        no_bc = (
+            x509.CertificateBuilder()
+            .subject_name(ca.name)
+            .issuer_name(ca.name)
+            .public_key(ca.key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(_NOW - datetime.timedelta(days=1))
+            .not_valid_after(_NOW + datetime.timedelta(days=365))
+            .sign(ca.key, hashes.SHA256())
+        )
+        outcome = recover_issuer_chain(
+            _pem(leaf), [("imp", [_pem(impostor)]), ("nobc", [_pem(no_bc)])]
+        )
+        assert not outcome.recovered
+        assert outcome.candidates_considered == 0
+
+    def test_the_confirm_path_can_see_past_its_scan_bound(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """The store read must return one row MORE than the scan bound.
+
+        With the SQL limit equal to the bound, the scan never meets the row
+        that proves it stopped early, so a miss over a full window read as an
+        exhaustive one (`scan_truncated: false`). 2026-10-01 review.
+        """
+        from acme_adcs_ra.routes import admin
+
+        store = Store(tmp_path / "ra.db")
+        ca = Ca()
+        orphan = _quarantine(store, ca.issue(0x6868), [])
+        for i in range(3):
+            filler = Ca(f"FILLER-{i}")
+            _quarantine(store, filler.issue(0x6900 + i), [filler.pem])
+        monkeypatch.setattr(admin, "ISSUER_RECOVERY_MAX_ROWS", 2)
+        audits: list[dict[str, Any]] = []
+        monkeypatch.setattr(admin, "_audit", lambda ctx, **kw: audits.append(kw))
+
+        class _Ctx:
+            pass
+
+        ctx = _Ctx()
+        ctx.store = store  # type: ignore[attr-defined]
+        admin._recover_issuer_evidence(ctx, orphan)  # type: ignore[arg-type]
+        assert len(audits) == 1
+        assert audits[0]["details"]["scan_truncated"] is True
+        assert audits[0]["details"]["chains_scanned"] == 2
+
+
 # ---------------------------------------------------------------------------
 # The store side: fill an empty chain, never overwrite one
 # ---------------------------------------------------------------------------

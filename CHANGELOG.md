@@ -60,8 +60,13 @@ CRL republished"; at least one round did not.
 The script verifies from the CDP rather than from `certutil`'s exit code, and
 carries its controls, because a CRL lookup that matches nothing returns what a
 correct negative returns: the revoked serials are the positive control,
-`--absent` is the negative control, and `--min-crl-number` proves the document
-was published *after* the revocations rather than served from a cache. An
+`--absent` is the negative control, and `--prior-crl-number` (strictly greater)
+proves the document was published *after* the revocations rather than served
+from a cache; both are required. The CRL must also name and verify under the
+required `--issuer`, be a base CRL and be unexpired, and a `removeFromCRL` entry
+is not counted as listed (all added after a 2026-10-01 cross-lineage review
+found the first version printed the verified banner for a CRL signed by any
+key). An
 unreachable CDP exits 2 — no evidence either way — distinct from the exit 1 that
 means the serials are genuinely not there. `docs/live-reproof-runbook.md` §E now
 requires it.

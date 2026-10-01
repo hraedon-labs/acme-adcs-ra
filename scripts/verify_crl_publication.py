@@ -23,9 +23,18 @@ sentence describing it was written, and nothing checked. So this script exists
 to make the claim evidence-bearing rather than asserted — the same treatment the
 runbook's preserve step already gets.
 
+**Authenticity first.** ``--issuer`` (the issuing CA certificate, PEM or DER)
+is required, and the CRL must name that CA as its issuer and carry a valid
+signature under its key; it must also be a *base* CRL (a delta CRL is refused)
+and still current (``nextUpdate`` in the future). Without those checks any
+parseable document listing the serials - a CRL from another CA, an expired one,
+one signed by nobody in particular - printed the verified banner (2026-10-01
+cross-lineage review of PR #18). An entry whose reason is ``removeFromCRL`` is
+the *un*-revoke marker, not a revocation, and is not counted as listed.
+
 **Controls, because absence proves nothing on its own.** A CRL lookup that
 matches nothing returns exactly what a correct negative returns. Two controls
-separate the cases:
+separate the cases, and both are REQUIRED whenever a serial is checked:
 
 * the revoked serials are the **positive control**. If the lookup is broken —
   wrong CRL, wrong encoding, a comparison that never matches — they read as
@@ -34,14 +43,17 @@ separate the cases:
   certificate, or an arbitrary unused value). If it reads as listed, the lookup
   matches everything and a "found" verdict means nothing.
 
-``--min-crl-number`` is the third: it proves the document is a *new* one rather
-than the pre-revocation CRL still being served from a cache or a replica. Pass
-the CRL Number observed before the republish.
+``--prior-crl-number`` is the third, also required: the CRL Number observed
+BEFORE the republish. The document must carry a number strictly greater than
+it, which proves it is a *new* one rather than the pre-revocation CRL still
+being served from a cache or a replica. (An earlier ``--min-crl-number``
+accepted equality, so the very CRL observed before the republish passed.)
 
 Interaction with ``sample_crl_age.py``: a forced republication truncates the
-current publication cycle. That **cannot** corrupt the served-age floor — a
-truncated cycle only ever serves ages below the running maximum, so it can move
-neither bound — but it does spend that cycle as a clean natural observation.
+current publication cycle. That **cannot** corrupt the served-age floor — every
+age a truncated cycle serves is a genuine served age, so it can never push the
+observed maximum above the true one; it can only fail to reach it — but it does
+spend that cycle as a clean natural observation.
 The trade is real and one-sided; do not skip the republish to protect the
 sampler.
 
@@ -50,31 +62,38 @@ Usage::
     # after the teardown's revocation loop and `certutil -config <CA> -CRL`
     python scripts/verify_crl_publication.py \\
         --url http://ca.example/crl/ca.crl \\
+        --issuer issuing-ca.cer \\
         --revoked 5A00000123 --revoked 5A00000124 \\
         --absent 5A00000999 \\
-        --min-crl-number 130
+        --prior-crl-number 130
 
     # a CRL already on disk
-    python scripts/verify_crl_publication.py --file ca.crl --revoked 5A00000123
+    python scripts/verify_crl_publication.py --file ca.crl --issuer issuing-ca.cer \\
+        --revoked 5A00000123 --absent 5A00000999 --prior-crl-number 130
 
 Exit status is 0 only when every check passed. Output lines are stable and
 greppable so a harness can assert on them:
 ``CRL-NUMBER=``, ``CRL-THIS-UPDATE=``, ``LISTED ``, ``MISSING ``,
-``NEGATIVE-CONTROL=``, ``CRL-PUBLICATION-VERIFIED``.
+``NEGATIVE-CONTROL=``, ``CRL-SIGNATURE=``, ``CRL-PUBLICATION-VERIFIED``.
+Exit 1 means "checked, and not proven"; exit 2 means no verdict (usage error,
+missing control, unreadable issuer, unreachable CDP or unparseable body).
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
 from cryptography import x509
+from cryptography.x509.oid import ExtensionOID
 
 DEFAULT_MAX_BYTES = 32 * 1024 * 1024
 DEFAULT_TIMEOUT = 30.0
+_HEX = re.compile(r"\A[0-9A-Fa-f]+\Z")
 
 
 def parse_serial(text: str) -> int:
@@ -91,6 +110,10 @@ def parse_serial(text: str) -> int:
         cleaned = cleaned[2:]
     if not cleaned:
         raise ValueError("empty serial")
+    # ASCII hex only. int(x, 16) alone also takes "-5", "1_000" and non-ASCII
+    # digits, each of which silently becomes a different number.
+    if not _HEX.match(cleaned):
+        raise ValueError(f"not a hex serial: {text!r}")
     return int(cleaned, 16)
 
 
@@ -123,6 +146,33 @@ def load_crl(body: bytes) -> x509.CertificateRevocationList:
     raise RuntimeError("body is neither valid DER nor PEM CRL")
 
 
+def load_issuer(body: bytes) -> x509.Certificate:
+    for loader in (x509.load_der_x509_certificate, x509.load_pem_x509_certificate):
+        try:
+            return loader(body)
+        except ValueError:
+            continue
+    raise RuntimeError("issuer file is neither a DER nor a PEM certificate")
+
+
+def _is_remove_from_crl(entry: x509.RevokedCertificate) -> bool:
+    try:
+        reason = entry.extensions.get_extension_for_class(x509.CRLReason).value
+    except x509.ExtensionNotFound:
+        return False
+    return reason.reason == x509.ReasonFlags.remove_from_crl
+
+
+def _signature_valid(
+    crl: x509.CertificateRevocationList, issuer: x509.Certificate
+) -> bool:
+    try:
+        return bool(crl.is_signature_valid(issuer.public_key()))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        # A key type that cannot sign a CRL cannot have signed this one.
+        return False
+
+
 def crl_number(crl: x509.CertificateRevocationList) -> int | None:
     try:
         return int(
@@ -135,13 +185,46 @@ def crl_number(crl: x509.CertificateRevocationList) -> int | None:
 def check(
     crl: x509.CertificateRevocationList,
     *,
+    issuer: x509.Certificate,
     revoked: list[int],
     absent: list[int],
-    min_crl_number: int | None,
+    prior_crl_number: int | None,
+    now: datetime | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return ``(report_lines, failures)``. Failures empty means verified."""
     lines: list[str] = []
     failures: list[str] = []
+    now = now or datetime.now(UTC)
+
+    # Authenticity before content: a membership answer from a document nobody
+    # vouches for is not evidence of anything.
+    if crl.issuer != issuer.subject:
+        lines.append("CRL-SIGNATURE=issuer-mismatch")
+        failures.append(
+            f"CRL issuer {crl.issuer.rfc4514_string()!r} is not the supplied CA "
+            f"{issuer.subject.rfc4514_string()!r}"
+        )
+    elif not _signature_valid(crl, issuer):
+        lines.append("CRL-SIGNATURE=invalid")
+        failures.append("CRL signature does not verify under the supplied CA key")
+    else:
+        lines.append("CRL-SIGNATURE=valid")
+    try:
+        crl.extensions.get_extension_for_oid(ExtensionOID.DELTA_CRL_INDICATOR)
+    except x509.ExtensionNotFound:
+        pass
+    else:
+        failures.append(
+            "this is a delta CRL; membership in a delta is not publication in "
+            "the base CRL relying parties fetch - point at the base CRL"
+        )
+    if crl.next_update_utc is None:
+        failures.append("CRL carries no nextUpdate, so its currency cannot be shown")
+    elif crl.next_update_utc <= now:
+        failures.append(
+            f"CRL expired at {crl.next_update_utc.isoformat()}: a stale document "
+            "is not evidence of a publication after the revocations"
+        )
 
     number = crl_number(crl)
     lines.append(f"CRL-NUMBER={number if number is not None else 'absent'}")
@@ -152,23 +235,25 @@ def check(
     )
     lines.append(f"CRL-ENTRY-COUNT={len(crl)}")
 
-    if min_crl_number is not None:
+    if prior_crl_number is not None:
         if number is None:
             failures.append(
-                "a minimum CRL Number was required but the document carries none, "
+                "a prior CRL Number was supplied but the document carries none, "
                 "so it cannot be shown to be newer than the pre-revocation CRL"
             )
-        elif number < min_crl_number:
+        elif number <= prior_crl_number:
             failures.append(
-                f"CRL Number {number} is below the required minimum "
-                f"{min_crl_number}: this is not a document published after the "
+                f"CRL Number {number} is not greater than the prior number "
+                f"{prior_crl_number}: this is not a document published after the "
                 "revocations"
             )
 
     # Build the listed set once. `get_revoked_certificate_by_serial_number`
     # exists, but iterating makes the entry count above and the membership test
     # come from the same read of the same document.
-    listed = {entry.serial_number for entry in crl}
+    # removeFromCRL is the un-revoke marker (it appears in delta CRLs); an entry
+    # carrying it says the certificate is NOT revoked, so it must not count.
+    listed = {entry.serial_number for entry in crl if not _is_remove_from_crl(entry)}
 
     for serial in revoked:
         if serial in listed:
@@ -206,6 +291,14 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--url", help="CDP URL to fetch the CRL from")
     source.add_argument("--file", help="a CRL already on disk (DER or PEM)")
     parser.add_argument(
+        "--issuer",
+        required=True,
+        help=(
+            "the issuing CA certificate (DER or PEM). The CRL must name it as "
+            "issuer and verify under its key."
+        ),
+    )
+    parser.add_argument(
         "--revoked",
         action="append",
         default=[],
@@ -218,19 +311,19 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         metavar="SERIAL",
         help=(
-            "negative control: a serial that must NOT be listed; repeatable. "
-            "Without one, 'not found' cannot be told from a lookup that "
-            "matches nothing."
+            "negative control: a serial that must NOT be listed; repeatable, "
+            "and required with --revoked. Without one, 'found' cannot be told "
+            "from a lookup that matches everything."
         ),
     )
     parser.add_argument(
-        "--min-crl-number",
+        "--prior-crl-number",
         type=int,
         default=None,
         help=(
-            "fail unless the CRL Number is at least this. Pass the number "
-            "observed BEFORE the republish, so a cached pre-revocation CRL "
-            "cannot pass."
+            "the CRL Number observed BEFORE the republish; required with "
+            "--revoked. Fails unless the document's number is strictly "
+            "greater, so a cached pre-revocation CRL cannot pass."
         ),
     )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
@@ -243,6 +336,20 @@ def main(argv: list[str] | None = None) -> int:
         absent = [parse_serial(s) for s in args.absent]
     except ValueError as exc:
         print(f"CRL-PUBLICATION-FAILED bad serial: {exc}", file=sys.stderr)
+        return 2
+    if revoked and (not absent or args.prior_crl_number is None):
+        # The controls are what make a "listed" answer mean something. A run
+        # without them cannot verify, so it does not get to try.
+        print(
+            "CRL-PUBLICATION-INDETERMINATE --revoked requires at least one "
+            "--absent negative control and --prior-crl-number",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        issuer = load_issuer(Path(args.issuer).read_bytes())
+    except (OSError, RuntimeError) as exc:
+        print(f"CRL-PUBLICATION-INDETERMINATE issuer: {exc}", file=sys.stderr)
         return 2
 
     try:
@@ -265,7 +372,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     lines, failures = check(
-        crl, revoked=revoked, absent=absent, min_crl_number=args.min_crl_number
+        crl,
+        issuer=issuer,
+        revoked=revoked,
+        absent=absent,
+        prior_crl_number=args.prior_crl_number,
     )
     for line in lines:
         print(line)
@@ -277,7 +388,8 @@ def main(argv: list[str] | None = None) -> int:
     if revoked:
         print(
             f"CRL-PUBLICATION-VERIFIED serials={len(revoked)} "
-            f"negative_controls={len(absent)} at "
+            f"negative_controls={len(absent)} "
+            f"source={'file' if args.file else 'url'} at "
             f"{datetime.now(UTC).isoformat()}"
         )
     return 0

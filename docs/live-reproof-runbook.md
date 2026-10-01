@@ -207,9 +207,10 @@ because the sentence describing it was written, and nothing checked. So:
    ```bash
    python scripts/verify_crl_publication.py \
        --url <CDP-URL> \
+       --issuer <ISSUING-CA-CERT>   # e.g. from `certutil -config <CA> -ca.cert ca.cer`
        --revoked <SERIAL> [--revoked <SERIAL> ...] \
        --absent <UN-REVOKED-SERIAL> \
-       --min-crl-number <NUMBER OBSERVED BEFORE THE REPUBLISH>
+       --prior-crl-number <NUMBER OBSERVED BEFORE THE REPUBLISH>
    ```
 
    `CRL-PUBLICATION-VERIFIED …` on stdout is the required evidence; its absence
@@ -218,8 +219,12 @@ because the sentence describing it was written, and nothing checked. So:
    lookup that matches nothing returns what a correct negative returns. The
    revoked serials are the **positive control** (a broken lookup reads them as
    absent and fails), `--absent` is the **negative control** (a lookup that
-   matches everything fails), and `--min-crl-number` proves the document is one
-   published *after* the revocations rather than a cached pre-revocation CRL.
+   matches everything fails), and `--prior-crl-number` proves the document is one
+   published *after* the revocations rather than a cached pre-revocation CRL
+   (its number must be strictly greater). Both controls are required with
+   `--revoked`. Before any of that, the CRL must name `--issuer` as its issuer,
+   verify under its key, be a base CRL (not a delta) and be unexpired; a
+   `removeFromCRL` entry does not count as listed.
    An unreachable CDP exits **2**, distinct from the **1** that means "checked,
    and the serials are not there": a transport failure is no evidence either
    way and must not be recorded as either verdict.
@@ -227,8 +232,9 @@ because the sentence describing it was written, and nothing checked. So:
 **Interaction with the sampler, so a future session does not get this backwards.**
 A forced republication truncates the current publication cycle, which costs
 `scripts/sample_crl_age.py` that cycle as a clean natural observation. It
-**cannot** corrupt the served-age floor — a truncated cycle only ever serves
-ages below the running maximum, so it can move neither bound. The trade is real
+**cannot** corrupt the served-age floor — every age a truncated cycle serves is
+a genuine served age, so it can never push the observed maximum above the true
+one; it can only fail to reach it. The trade is real
 and one-sided: do not skip the republish to protect the sampler.
 
 **Preserve the post-run store BEFORE restoring it.** Copy the live store — all

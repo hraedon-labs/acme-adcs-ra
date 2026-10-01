@@ -1193,8 +1193,11 @@ than retried in silence:
 and the denial carries `reason_code: "issuer-evidence-missing"`. That reason
 code is the one denial on this path that **cannot** be resolved by retrying;
 every other one ("CDP unreachable", "serial not listed", "regressed") means
-"not yet". It clears itself as soon as the store holds any complete chain from
-that CA; until then, reconcile the certificate at the CA by ReqID.
+"not yet". It clears itself on the next confirmation attempt once one of the
+newest 1000 complete stored chains carries the CA certificate that signed the
+leaf (`scan_truncated: true` in the failure audit says the window was
+exhausted before the search was); until then, reconcile the certificate at the
+CA by ReqID.
 
 **2. Only the ReqID is known** — the leaf fetch itself failed, so there are no
 certificate bytes and **no store row at all**. Nothing automated can revoke it:

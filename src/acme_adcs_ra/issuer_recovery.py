@@ -74,6 +74,30 @@ def certificate_fingerprint(certificate: x509.Certificate) -> str:
     return certificate.fingerprint(hashes.SHA256()).hex().upper()
 
 
+def is_ca_certificate(certificate: x509.Certificate) -> bool:
+    """BasicConstraints CA=true, and keyCertSign if KeyUsage is present.
+
+    Strict on BasicConstraints: an RFC 5280 CA certificate MUST carry it, and
+    every ADCS CA certificate does. A miss here only withholds recovery, which
+    fails closed into the existing ``issuer-evidence-missing`` denial.
+    """
+    try:
+        constraints = certificate.extensions.get_extension_for_class(
+            x509.BasicConstraints
+        ).value
+    except (x509.ExtensionNotFound, ValueError):
+        return False
+    if not constraints.ca:
+        return False
+    try:
+        usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
+    except x509.ExtensionNotFound:
+        return True
+    except ValueError:
+        return False
+    return bool(usage.key_cert_sign)
+
+
 @dataclass(frozen=True)
 class CandidateIssuer:
     """One distinct CA certificate found in the store, and where it came from."""
@@ -147,6 +171,15 @@ def collect_candidate_issuers(
                 # search; the next row may hold the material.
                 continue
             for certificate in parsed:
+                if not is_ca_certificate(certificate):
+                    # Only a CA certificate is issuer material. The key that
+                    # verifies the leaf is already pinned by the leaf's own
+                    # signature, so this does not change WHICH key a CRL is
+                    # checked against; it keeps a non-CA certificate that
+                    # somehow reached a stored chain out of the evidence and
+                    # out of the audit record (defence in depth, 2026-10-01
+                    # review).
+                    continue
                 fingerprint = certificate_fingerprint(certificate)
                 if fingerprint in seen:
                     continue

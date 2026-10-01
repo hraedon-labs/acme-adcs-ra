@@ -1599,8 +1599,9 @@ Requirements the implementation must satisfy:
 > `docs/live-reproof-runbook.md` §E now requires the republish *and* an
 > evidence-bearing verification from the CDP;
 > `scripts/verify_crl_publication.py` performs it with a positive control, a
-> negative control and a CRL-Number floor (10 tests, mutation-proved against
-> four reverted guards); and the sampler interaction is stated in the runbook so
+> negative control and a CRL-Number floor, and (since 2026-10-01) a
+> required issuer signature check, delta/expiry/removeFromCRL refusal and
+> required controls (23 tests, each guard mutation-proved); and the sampler interaction is stated in the runbook so
 > a future session does not skip the republish to protect a publication cycle.
 > The gitignored lab harness (`samples/lab-harness/teardown-revoke.ps1`) carries
 > the equivalent inline check — its Python was smoke-tested against a real CRL

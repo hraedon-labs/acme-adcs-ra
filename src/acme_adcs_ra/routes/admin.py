@@ -28,6 +28,7 @@ from acme_adcs_ra.crl_evidence import (
 )
 from acme_adcs_ra.finalize import _refresh_order_or_500
 from acme_adcs_ra.http_body import read_body_limited
+from acme_adcs_ra.issuer_recovery import DEFAULT_MAX_ROWS as ISSUER_RECOVERY_MAX_ROWS
 from acme_adcs_ra.issuer_recovery import recover_issuer_chain
 from acme_adcs_ra.serializers import _order_to_admin_json, _order_to_json
 from acme_adcs_ra.store import (
@@ -71,7 +72,8 @@ ISSUER_EVIDENCE_RECOVERY_ACTION = (
     "the RA holds this certificate but not the CA certificate that signed it, "
     "so no CRL signature can be verified for it. Recovery runs automatically on "
     "the next confirmation attempt, once revocation_confirm_crl_url is set and "
-    "the store holds any complete chain from the same issuing CA; until then, "
+    "one of the newest stored chains carries the issuing CA certificate; until "
+    "then, "
     "reconcile it at the CA by ReqID."
 )
 
@@ -110,8 +112,14 @@ def _recover_issuer_evidence(
     if cert.chain_pem:
         return cert
     try:
+        # One row past the scan bound, so that a store holding more chains
+        # than the bound reports `truncated` instead of an exhaustive-looking
+        # miss (2026-10-01 review: the SQL limit and the scan bound were equal,
+        # so the scan could never see the row that proves it stopped early).
         outcome = recover_issuer_chain(
-            cert.cert_pem, ctx.store.list_certificate_chains()
+            cert.cert_pem,
+            ctx.store.list_certificate_chains(limit=ISSUER_RECOVERY_MAX_ROWS + 1),
+            max_rows=ISSUER_RECOVERY_MAX_ROWS,
         )
     except Exception:  # noqa: BLE001 - recovery must never break confirmation
         logger.warning(
