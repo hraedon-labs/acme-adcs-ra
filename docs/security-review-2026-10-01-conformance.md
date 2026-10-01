@@ -45,7 +45,10 @@ signed request, resent with the right type, succeeds). Media-type parameters
 (`; charset=utf-8`) do not affect the match and the type compares
 case-insensitively (RFC 9110 §8.3.1); the field must appear **exactly once** —
 duplicates are refused in either order (Daybreak Blue, round 1, found the
-first-of-two was trusted) — and a comma-joined list is not a media type. A
+first-of-two was trusted) — and **any comma** is refused, because a comma means
+a list however it arrived (folded duplicates, unfolded obs-fold): round 2 found
+`application/jose+json; charset=utf-8, text/plain` slipped past the first fix
+by splitting at `;` before looking for a list. A
 **missing** Content-Type is also 415: §6.2's wording is "if a request does not
 meet this requirement", and a request without the field does not. The problem type is
 `malformed` — RFC 8555 registers none for 415. Admin JSON endpoints do not use
@@ -106,7 +109,7 @@ is the precedent). Whether to conform is an owner decision, filed as WI-037.
 
 ## Mutation matrix
 
-New: `tests/test_rfc8555_conformance_2026_10_01.py` (23). One mutation at a
+New: `tests/test_rfc8555_conformance_2026_10_01.py` (29; 23 at first review, +3 duplicate-field cases in round 1, +3 comma-list cases in round 2). One mutation at a
 time, against the fixed tree:
 
 | Mutation | Result |
@@ -117,8 +120,10 @@ time, against the fixed tree:
 | outer unsupported-alg mapping removed | 5 fail |
 | inner keyChange mapping removed | 1 fails |
 | `jws.py` raises the parent exception | 6 fail |
-| media-type check removed | 4 fail |
+| media-type check removed | 10 fail (was 4 on the original 23) |
 | media type compared raw (no param/case handling) | 2 fail |
+| (round 1) duplicate-field refusal removed | 2 fail |
+| (round 2) comma refusal removed | 1 fails (`jose+json; charset=utf-8, text/plain`) |
 | kid floor not called | 3 fail |
 | grandfathering disabled | 1 fails |
 | `allow_weak_credentials` ignored | 3 fail |

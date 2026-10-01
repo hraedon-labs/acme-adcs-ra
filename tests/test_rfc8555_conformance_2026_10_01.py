@@ -236,6 +236,9 @@ class _HeaderOverride:
         [("content-type", "application/jose+json"), ("content-type", "text/plain")],
         [("content-type", "text/plain"), ("content-type", "application/jose+json")],
         [("content-type", "application/jose+json"), ("content-type", "application/jose+json")],
+        [("content-type", "application/jose+json; charset=utf-8, text/plain")],
+        [("content-type", "application/jose+json, text/plain")],
+        [("content-type", "text/plain, application/jose+json")],
     ],
 )
 def test_duplicate_content_type_fields_are_refused_in_either_order(

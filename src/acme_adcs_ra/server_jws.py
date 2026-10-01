@@ -140,6 +140,15 @@ def _require_jose_json(request: Request) -> None:
             f"ACME requests must carry exactly one Content-Type field; got {len(fields)}"
         )
     raw = fields[0] if fields else ""
+    # A comma means a list of values, however it arrived: two fields folded by
+    # a proxy, obsolete line folding unfolded by h11, or a client sending one.
+    # Splitting at ';' first let "application/jose+json; charset=utf-8,
+    # text/plain" through (Daybreak Blue, round 2). No single media type this
+    # RA accepts contains a comma, so any comma is refused outright.
+    if "," in raw:
+        raise unsupported_media_type(
+            "ACME requests must carry exactly one Content-Type value; got a list"
+        )
     media_type = raw.split(";", 1)[0].strip().lower()
     if media_type != JOSE_JSON:
         raise unsupported_media_type(
