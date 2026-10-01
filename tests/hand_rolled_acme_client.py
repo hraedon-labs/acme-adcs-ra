@@ -284,9 +284,12 @@ class HandRolledAcmeClient:
         new_jwk = jwk_from_private_key(new_key)
         old_jwk = self.account_jwk
 
+        # RFC 8555 §7.3.5: "The inner JWS MUST omit the 'nonce' header
+        # parameter." This client used to send one, which is exactly the
+        # server's old non-standard dialect (item 27) -- so every rollover test
+        # passed while every conformant client failed.
         inner_protected: dict[str, Any] = {
             "alg": "RS256" if isinstance(new_key, rsa.RSAPrivateKey) else "ES256",
-            "nonce": self._nonce_for(),
             "url": url,
             "jwk": new_jwk,
         }

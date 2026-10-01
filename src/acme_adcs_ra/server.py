@@ -11,13 +11,15 @@ The enrollment leg (``EnrollmentLeg``) forwards accepted CSRs to ADCS.
 
 from __future__ import annotations
 
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from acme_adcs_ra.acme_errors import AcmeError
+from acme_adcs_ra.acme_errors import BAD_NONCE_TYPE, AcmeError
 from acme_adcs_ra.app_state import (
     ServerContext,
     _default_nonce_bucket,
@@ -41,6 +43,80 @@ def _package_version() -> str:
         return version("acme-adcs-ra")
     except PackageNotFoundError:  # pragma: no cover - source checkout without install
         return "0+unknown"
+
+
+class ReplayNonceMiddleware:
+    """Attach a fresh ``Replay-Nonce`` to ACME POST responses (item 28).
+
+    RFC 8555 §6.5: the server MUST include ``Replay-Nonce`` "in every
+    successful response to a POST request", and a ``badNonce`` error MUST carry
+    one "that the server will accept in a retry". The RA used to set it only on
+    ``new-nonce`` — so certbot (acme-python raises ``MissingNonce``) could not
+    even register, and Posh-ACME re-sent its spent nonce and failed every POST
+    after new-account.
+
+    The decision is driven by two request-state flags, never by path:
+    ``acme_nonce_consumed`` (set by ``server_jws._parse_jws_header`` once a
+    nonce has been spent) and ``acme_error_type`` (set by the ``AcmeError``
+    handler). Non-JWS routes (directory, admin) set neither and are untouched.
+
+    **Which mints may bypass the nonce bucket.** The bucket exists so that an
+    unauthenticated flood cannot hold SQLite's single writer (directory.py). A
+    successful POST response has, by construction, verified a JWS — the caller
+    is an authenticated account, or a new account that passed EAB — so it gets
+    its nonce unbucketed: one spent, one minted, and the RFC's MUST holds even
+    when the bucket is dry. Every ERROR response draws from the bucket exactly
+    as ``new-nonce`` does, because an error may come from an unauthenticated
+    peer: without that, "send a garbage signature with a valid nonce, receive a
+    fresh nonce in the 401" would be an unbounded nonce chain around the
+    bucket. A dry bucket on an error simply omits the header (the client falls
+    back to ``new-nonce``, which then answers ``rateLimited``).
+
+    A mint that fails (unwritable store) is logged and the header omitted: the
+    request's own effects have already committed, and turning a completed
+    operation into a 500 after the fact would be worse than a missing nonce.
+    """
+
+    def __init__(self, app: ASGIApp, context: ServerContext) -> None:
+        self.app = app
+        self.context = context
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        state: dict[str, Any] = scope.setdefault("state", {})
+
+        async def send_with_nonce(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                nonce = self._nonce_for(message, state)
+                if nonce is not None:
+                    headers = list(message.get("headers", []))
+                    headers.append((b"replay-nonce", nonce.encode("ascii")))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_nonce)
+
+    def _nonce_for(self, message: Message, state: dict[str, Any]) -> str | None:
+        if any(k.lower() == b"replay-nonce" for k, _v in message.get("headers", [])):
+            return None
+        consumed = bool(state.get("acme_nonce_consumed"))
+        status = int(message["status"])
+        if status < 400:
+            if not consumed:
+                return None
+        elif not (consumed or state.get("acme_error_type") == BAD_NONCE_TYPE):
+            return None
+        else:
+            bucket = self.context.nonce_bucket
+            if bucket is not None and not bucket.take():
+                return None
+        try:
+            return self.context.store.create_nonce()
+        except (sqlite3.Error, OSError):
+            logger.exception("could not mint a Replay-Nonce for an ACME response")
+            return None
 
 
 def create_app(context: ServerContext) -> FastAPI:
@@ -174,6 +250,9 @@ def create_app(context: ServerContext) -> FastAPI:
 
     @app.exception_handler(AcmeError)
     async def acme_exception_handler(request: Request, exc: AcmeError) -> JSONResponse:
+        # Read by ReplayNonceMiddleware: a badNonce error is owed a nonce
+        # even though no nonce was consumed (RFC 8555 §6.5).
+        request.state.acme_error_type = exc.typ
         return JSONResponse(
             status_code=exc.status,
             content=exc.to_problem(),
@@ -182,5 +261,6 @@ def create_app(context: ServerContext) -> FastAPI:
 
     app.include_router(acme_router)
     app.include_router(admin_router)
+    app.add_middleware(ReplayNonceMiddleware, context=context)
 
     return app

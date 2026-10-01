@@ -158,6 +158,9 @@ async def _parse_jws_header(
     # Consume nonce BEFORE verifying URL so that a bad-URL probe still
     # burns the nonce, limiting replay probing (M6).
     _consume_nonce(store, header, expected_url)
+    # Read by the Replay-Nonce middleware in server.py (item 28): a request
+    # that spent a nonce is owed one back in its response.
+    request.state.acme_nonce_consumed = True
     _verify_url(header, expected_url)
 
     return header, jws

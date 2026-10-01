@@ -34,10 +34,19 @@ class AcmeError(Exception):
         }
 
 
+BAD_NONCE_TYPE = "urn:ietf:params:acme:error:badNonce"
+
+# Interop accommodation, not protocol: acme.sh (3.1.6) retries a badNonce only
+# when the problem *detail* contains Boulder's wording, not on the error type
+# RFC 8555 §6.5 defines. Leading with that phrase costs nothing and lets acme.sh
+# take the retry path every other client takes on the type alone.
+_BAD_NONCE_DETAIL_PREFIX = "JWS has an invalid anti-replay nonce"
+
+
 def bad_nonce(detail: str = "invalid or missing nonce") -> AcmeError:
     return AcmeError(
-        "urn:ietf:params:acme:error:badNonce",
-        detail,
+        BAD_NONCE_TYPE,
+        f"{_BAD_NONCE_DETAIL_PREFIX}: {detail}",
         status=400,
     )
 

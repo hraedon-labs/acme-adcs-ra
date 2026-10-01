@@ -375,7 +375,6 @@ def test_key_change_malformed_oldkey_is_a_client_error(tmp_path: Path) -> None:
         {
             "alg": "ES256",
             "jwk": jwk_from_private_key(new_key),
-            "nonce": client.head("/acme/new-nonce").headers["Replay-Nonce"],
             "url": url,
         },
     )

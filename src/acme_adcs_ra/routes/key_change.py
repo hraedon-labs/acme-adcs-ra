@@ -9,10 +9,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from acme_adcs_ra.acme_errors import (
-    bad_nonce,
     bad_public_key,
     malformed,
     rate_limited,
+    server_internal,
     unauthorized,
 )
 from acme_adcs_ra.app_state import (
@@ -31,6 +31,7 @@ from acme_adcs_ra.jws import (
     jwk_thumbprint,
     verify_flattened_jws,
 )
+from acme_adcs_ra.serializers import _account_to_json
 from acme_adcs_ra.store import AccountKeyStale, KeyChangeRateLimitExceeded
 
 router = APIRouter()
@@ -76,15 +77,27 @@ async def key_change(
             "inner JWS url does not match outer JWS url (RFC 8555 §7.3.5)"
         )
 
-    inner_nonce = inner_header.get("nonce")
-    if not inner_nonce:
-        raise bad_nonce("inner JWS protected header missing nonce")
-    # Same class as the outer nonce: a truthy non-string reaches SQLite
-    # parameter binding and 500s. RFC 8555 §6.5 nonces are strings.
-    if not isinstance(inner_nonce, str):
-        raise bad_nonce("inner JWS Replay-Nonce must be a string")
-    if not ctx.store.consume_nonce(inner_nonce):
-        raise bad_nonce("invalid or replayed inner JWS nonce")
+    # RFC 8555 §7.3.5: "The inner JWS MUST omit the 'nonce' header parameter."
+    # Replay protection for the whole request is the OUTER nonce, which
+    # authenticate_account has already verified and consumed; the inner JWS is
+    # only ever accepted as the payload of that one outer request. This route
+    # used to REQUIRE and consume an inner nonce, so every conformant client
+    # (which omits it, as the RFC says) failed rollover with badNonce — at the
+    # exact moment a key-compromise response needs the endpoint (item 27).
+    # A present inner nonce is refused rather than ignored: the RFC says MUST
+    # omit, and accepting it would keep the old non-standard dialect alive in
+    # the in-repo test client.
+    if "nonce" in inner_header:
+        raise malformed(
+            "inner JWS protected header must omit nonce (RFC 8555 §7.3.5)"
+        )
+    # The inner JWS is identified by its embedded jwk (the NEW key); jwk and kid
+    # are mutually exclusive (RFC 8555 §6.2), and a kid here would name an
+    # account rather than the key being proven.
+    if "kid" in inner_header:
+        raise malformed(
+            "inner JWS protected header must use jwk, not kid (RFC 8555 §7.3.5)"
+        )
 
     try:
         new_public_key = _public_key_from_jwk(new_jwk)
@@ -217,4 +230,9 @@ async def key_change(
         raise
     emit_audit_hook(ctx, event)
 
-    return JSONResponse(content={})
+    # RFC 8555 §7.3.5: on success the server "returns status code 200 (OK) and
+    # the updated account object". This used to return ``{}``.
+    refreshed = ctx.store.get_account(account_id)
+    if refreshed is None:
+        raise server_internal("account disappeared after key rollover")
+    return JSONResponse(content=_account_to_json(ctx, refreshed))

@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Stock ACME clients can roll account keys and keep a nonce (2026-10-01)
+
+**keyChange now accepts the inner JWS the RFC specifies (WI-031).** RFC 8555
+§7.3.5 says the inner JWS MUST omit `nonce`; the RA required one, so lego,
+acme.sh and Posh-ACME all failed key rollover with `badNonce` (reproduced with
+each). An absent inner nonce is now the accepted form and a present one is
+refused as `malformed`; only the outer nonce is spent. A successful rollover
+returns the updated account object instead of `{}`.
+
+**Every successful ACME POST, and every `badNonce`, now carries
+`Replay-Nonce` (WI-032).** The header used to appear only on `new-nonce`, which
+left certbot unable to register at all (`MissingNonce`) and Posh-ACME failing
+every request after new-account. Error responses draw their nonce from the
+existing nonce bucket, so an unauthenticated peer cannot use failed requests to
+mint nonces around the flood control; successful (verified) requests are
+always answered with one. `badNonce` details now lead with Boulder's wording,
+which acme.sh needs before it will retry. See `docs/security-review-2026-10-01.md`.
+
 ### Transport-orphaned certificates can be confirmed again (2026-09-05)
 
 **Fixes a permanent wedge.** A certificate the CA issued but whose chain fetch
