@@ -109,7 +109,7 @@ def test_new_account_success_carries_a_nonce(tmp_path: Path) -> None:
 
 
 def test_post_as_get_success_carries_a_nonce(tmp_path: Path) -> None:
-    client, _store, _ctx, _bucket, acme = _setup(tmp_path)
+    _client, _store, _ctx, _bucket, acme = _setup(tmp_path)
     order = acme.new_order(["srv01.WORK-DOMAIN.local"])
     authz_url = order.json()["authorizations"][0]
     resp = acme.post_as_get(authz_url)
