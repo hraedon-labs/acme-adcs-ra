@@ -127,10 +127,19 @@ _TOKEN = rf"{_TCHAR}+"
 _QUOTED = r'"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*"'
 # A pattern string, not re.compile(): the no-signing architecture guard bans
 # any call named compile() in src/ (dynamic code loading); re caches it anyway.
+#
+# Every OWS quantifier is POSSESSIVE (``*+``). With plain ``*`` the OWS on both
+# sides of ';' and an empty parameter overlap, so "; " * n followed by a
+# rejecting byte had exponentially many parses: ~370 ms at 62 bytes, a hang
+# at ~100 — an unauthenticated DoS reachable before auth, nonce or body
+# (DeepSeek, round 4). Possessive OWS never gives characters back, making the
+# match linear; the length cap below bounds it regardless.
 _MEDIA_TYPE = (
-    rf"[ \t]*({_TOKEN}/{_TOKEN})"
-    rf"(?:[ \t]*;[ \t]*(?:{_TOKEN}=(?:{_TOKEN}|{_QUOTED}))?)*[ \t]*"
+    rf"[ \t]*+({_TOKEN}/{_TOKEN})"
+    rf"(?:[ \t]*+;[ \t]*+(?:{_TOKEN}=(?:{_TOKEN}|{_QUOTED}))?)*[ \t]*+"
 )
+# No legitimate ACME Content-Type is anywhere near this long.
+_MAX_CONTENT_TYPE_CHARS = 256
 
 
 def _require_jose_json(request: Request) -> None:
@@ -159,7 +168,9 @@ def _require_jose_json(request: Request) -> None:
     # "application/jose+json; text/plain" (a malformed parameter, ignored)
     # and wrongly refused a comma inside a quoted parameter value (Daybreak
     # Blue, round 3). A list (folded duplicates, obs-fold) fails the grammar.
-    match = re.fullmatch(_MEDIA_TYPE, raw)
+    match = (
+        re.fullmatch(_MEDIA_TYPE, raw) if len(raw) <= _MAX_CONTENT_TYPE_CHARS else None
+    )
     if match is None or match.group(1).lower() != JOSE_JSON:
         raise unsupported_media_type(
             f"ACME requests must use exactly one Content-Type of {JOSE_JSON} "

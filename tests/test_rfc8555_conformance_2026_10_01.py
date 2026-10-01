@@ -293,6 +293,43 @@ def test_duplicate_content_type_fields_are_refused_in_either_order(
     assert client.post("/acme/new-order", content=body, headers=JOSE_HEADERS).status_code == 201
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "application/jose+json" + "; " * 40 + "!",
+        "application/jose+json" + " ; " * 40 + "!",
+        "application/jose+json" + " ;" * 60 + "!",
+        "application/jose+json" + "; " * 20000 + "!",
+    ],
+)
+def test_content_type_parse_is_linear_on_hostile_input(value: str) -> None:
+    """DeepSeek round 4: the first grammar regex backtracked exponentially on
+    '; ' runs (hang at ~100 bytes), reachable unauthenticated. Run in a child
+    process with a timeout: the regex engine holds the GIL, so an in-process
+    thread could not even time it out."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys\n"
+        "from starlette.requests import Request\n"
+        "from acme_adcs_ra.acme_errors import AcmeError\n"
+        "from acme_adcs_ra.server_jws import _require_jose_json\n"
+        "v = sys.stdin.read()\n"
+        "scope = {'type': 'http', 'method': 'POST', 'path': '/acme/new-order',\n"
+        "         'headers': [(b'content-type', v.encode())]}\n"
+        "try:\n"
+        "    _require_jose_json(Request(scope))\n"
+        "except AcmeError as exc:\n"
+        "    print(exc.status)\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", probe], input=value, capture_output=True, text=True,
+        timeout=10, check=False,
+    )
+    assert done.stdout.strip() == "415", done.stderr
+
+
 def test_admin_json_endpoints_are_not_subject_to_the_jose_rule(tmp_path: Path) -> None:
     config = _make_config(tmp_path)
     app, _store, _ctx = _make_app(config)

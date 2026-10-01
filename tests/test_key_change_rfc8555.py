@@ -33,7 +33,7 @@ from .test_key_change import _make_app, _make_config
 
 BASE = "http://testserver"
 KEY_CHANGE_URL = f"{BASE}/acme/key-change"
-_KID = "kid-001"
+_KID = "kid-001-0123456789abcdef"
 
 
 def _setup(tmp_path: Path) -> tuple[TestClient, Store, HandRolledAcmeClient]:

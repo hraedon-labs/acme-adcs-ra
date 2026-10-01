@@ -262,7 +262,8 @@ class TestRevokeCertAuthorization:
         test_config: RAConfig,
         account_key: rsa.RSAPrivateKey,
     ) -> None:
-        """H-4: RFC 8555 §7.6 — re-revoking an already-revoked cert returns 200 OK."""
+        """H-4: re-revoking an already-revoked cert returns 200 OK — a deliberate
+        deviation; RFC 8555 §7.6 specifies 400 alreadyRevoked (WI-047)."""
         ac, cert_der = _issue_cert(client, test_config, account_key)
         assert ac.revoke_certificate(cert_der, reason=0).status_code == 200
         resp = ac.revoke_certificate(cert_der, reason=0)
