@@ -135,6 +135,12 @@ jobs:
           FORBIDDEN_IDENTIFIERS: ${{ secrets.FORBIDDEN_IDENTIFIERS }}
         run: python scripts/check_committed_identifiers.py
 
+      - name: Published-range identifier gate
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          FORBIDDEN_IDENTIFIERS: ${{ secrets.FORBIDDEN_IDENTIFIERS }}
+        run: python3 scripts/check_committed_identifiers.py --ci-range
+
   pester:
     # PowerShell pure-logic tests (WI-037): golden-bytes blob builder,
     # action-string builder, reason/requester validation, exit-code contract.
