@@ -132,9 +132,12 @@ badNonce-retry path**. Every injection is checked independently inside that
 client's proxy-log line window. The poisoned copy must return 401; the genuine
 request with the same path, protected-header nonce, and 12-hex SHA-256 of the
 JWS `payload` member must return 400
-`urn:ietf:params:acme:error:badNonce`; and the next POST to that path must carry
-the same payload hash, a different nonce, and return 2xx. A later success with a
-different payload, or any non-401 burn, does not satisfy the proof. Output: one
+`urn:ietf:params:acme:error:badNonce`; and the client's very next POST, of any
+path, must be to that same path with the same payload hash and a different
+nonce, and return 2xx. An intervening POST elsewhere, a later success with a
+different payload, or any non-401 burn does not satisfy the proof. Endpoint
+declarations are checked per client: each client must itself send every
+endpoint class it declares. Output: one
 `RESULT <client> <step> PASS|FAIL|SKIP` line per step, transcripts under
 `$INTEROP_WORK/out` (proxy log = every request the client actually sent).
 Transcripts include the run's throwaway EAB HMAC keys in client argv; they are

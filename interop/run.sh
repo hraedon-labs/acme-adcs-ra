@@ -90,6 +90,7 @@ check_badnonce_window() {
                     retry_nonce[i] = value("nonce")
                     retry_payload[i] = value("payload")
                     retry_status[i] = response_status()
+                    break  # one POST is the retry of at most one injection
                 }
             }
             next
@@ -312,33 +313,8 @@ run_client() {
     fi
 }
 
-inventory_check() {
-    local endpoint pattern count selected scenario declared
-    declare -A required=()
-    for selected in "${CLIENTS[@]}"; do
-        case "$selected" in
-            certbot|lego|acmesh) scenario="$REPO/interop/clients/$selected.sh" ;;
-            posh-acme) scenario="$REPO/interop/clients/posh-acme.ps1" ;;
-            *) echo "RESULT inventory declarations ERROR (unknown client $selected)"; return 2 ;;
-        esac
-        while IFS= read -r declared; do
-            required[$declared]=1
-        done < <(declared_endpoints "$scenario")
-    done
-    while IFS='|' read -r endpoint pattern; do
-        count=$(grep -Ec "$pattern" "$WORK/out/proxy-clients.log" || true)
-        if [[ "$endpoint" == new-nonce-get || "$endpoint" == acct-orders-list ]]; then
-            echo "RESULT inventory $endpoint SKIP (no stock client in this harness exercises it)"
-        elif [ "${required[$endpoint]+declared}" = declared ]; then
-            if [ "$count" -gt 0 ]; then
-                echo "RESULT inventory $endpoint PASS ($count requests)"
-            else
-                echo "RESULT inventory $endpoint FAIL (declared by selected client(s), 0 requests)"
-            fi
-        else
-            echo "RESULT inventory $endpoint SKIP (not declared by selected client(s))"
-        fi
-    done <<'EOF'
+endpoint_table() {
+    cat <<'EOF'
 directory|^GET /directory([?][^ ]*)? ct=
 new-nonce-head|^HEAD /acme/new-nonce([?][^ ]*)? ct=
 new-nonce-get|^GET /acme/new-nonce([?][^ ]*)? ct=
@@ -354,6 +330,53 @@ cert|^POST /acme/cert/[^/ ?]+([?][^ ]*)? ct=
 revoke-cert|^POST /acme/revoke-cert([?][^ ]*)? ct=
 key-change|^POST /acme/key-change([?][^ ]*)? ct=
 EOF
+}
+
+endpoint_pattern() {
+    endpoint_table | awk -F'|' -v e="$1" '$1 == e { print $2 }'
+}
+
+inventory_check() {
+    local endpoint pattern count selected scenario declared
+    declare -A required=()
+    for selected in "${CLIENTS[@]}"; do
+        case "$selected" in
+            certbot|lego|acmesh) scenario="$REPO/interop/clients/$selected.sh" ;;
+            posh-acme) scenario="$REPO/interop/clients/posh-acme.ps1" ;;
+            *) echo "RESULT inventory declarations ERROR (unknown client $selected)"; return 2 ;;
+        esac
+        while IFS= read -r declared; do
+            required[$declared]=1
+            # Per client: each client must itself send every endpoint it
+            # declares; another client's traffic must not satisfy it
+            # (Daybreak Blue, round 5).
+            pattern=$(endpoint_pattern "$declared")
+            if [ -z "$pattern" ]; then
+                echo "RESULT $selected declares-$declared FAIL (unknown endpoint class)"
+                continue
+            fi
+            count=$(grep -Ec "$pattern" "$WORK/out/proxy-$selected.log" 2>/dev/null || true)
+            if [ "${count:-0}" -gt 0 ]; then
+                echo "RESULT $selected sends-$declared PASS ($count requests)"
+            else
+                echo "RESULT $selected sends-$declared FAIL (declared, but this client sent 0)"
+            fi
+        done < <(declared_endpoints "$scenario")
+    done
+    while IFS='|' read -r endpoint pattern; do
+        count=$(grep -Ec "$pattern" "$WORK/out/proxy-clients.log" || true)
+        if [[ "$endpoint" == new-nonce-get || "$endpoint" == acct-orders-list ]]; then
+            echo "RESULT inventory $endpoint SKIP (no stock client in this harness exercises it)"
+        elif [ "${required[$endpoint]+declared}" = declared ]; then
+            if [ "$count" -gt 0 ]; then
+                echo "RESULT inventory $endpoint PASS ($count requests)"
+            else
+                echo "RESULT inventory $endpoint FAIL (declared by selected client(s), 0 requests)"
+            fi
+        else
+            echo "RESULT inventory $endpoint SKIP (not declared by selected client(s))"
+        fi
+    done < <(endpoint_table)
 }
 
 : >"$WORK/out/results.txt"
