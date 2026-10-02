@@ -1,0 +1,41 @@
+name: Stock-client interop
+
+# WI-045: certbot, lego, acme.sh and Posh-ACME against a local RA with an
+# in-memory fake CA (interop/run.sh). Needs Docker and network access to pull
+# the pinned client images and Posh-ACME from PSGallery; needs no secrets.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stock-clients:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Run interop harness
+        env:
+          INTEROP_WORK: ${{ runner.temp }}/interop
+        run: interop/run.sh
+
+      - name: Transcripts (on failure)
+        if: failure()
+        env:
+          INTEROP_WORK: ${{ runner.temp }}/interop
+        run: |
+          for f in "$INTEROP_WORK"/out/*.log; do
+            echo "::group::$(basename "$f")"; tail -n 300 "$f"; echo "::endgroup::"
+          done

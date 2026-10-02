@@ -104,6 +104,84 @@ with an independent implementation.
 4. Preserve redacted client logs and the associated RA/CA evidence before
    teardown. Record any skipped client operation as unproven, with its reason.
 
+### A.2b Stock-client full-inventory pass (WI-045, added 2026-10-01)
+
+**Run it locally first, every time** — it needs no lab, no CA and no secrets:
+
+```bash
+interop/run.sh                       # certbot, lego, acme.sh, Posh-ACME
+RA_SRC=<other checkout> interop/run.sh lego posh-acme   # a different tree
+INJECT_BAD_NONCE_EVERY=0 interop/run.sh                 # no fault injection
+```
+
+It builds the RA from the tree under test (hash-pinned production closure),
+fronts it with a TLS proxy, and replaces only the enrollment leg with an
+in-memory signer (`interop/ra_harness_entry.py`, outside `src/` and never in the
+wheel or sdist). Each client drives what it supports: directory, new-nonce HEAD,
+new-account (EAB), account update, new-order, authz POST-as-GET, challenge,
+finalize, order polling, certificate download, **keyChange**, revokeCert, and
+deactivation. Each scenario declares the endpoint classes it actually drives;
+the inventory expectation is the union of declarations for the clients selected
+on the command line. A declared endpoint with no observed request is a FAIL. An
+endpoint not declared by any selected client is a SKIP, not evidence of a
+missing request.
+
+The proxy burns the nonce of every Nth JWS POST before forwarding it, so
+**every injecting run (the default, and CI) exercises each selected client's
+badNonce-retry path**. Every injection is checked independently inside that
+client's proxy-log line window. The poisoned copy must return 401; the genuine
+request with the same path, protected-header nonce, and 12-hex SHA-256 of the
+JWS `payload` member must return 400
+`urn:ietf:params:acme:error:badNonce`; and the client's very next POST, of any
+path, must be to that same path with the same payload hash and a different
+nonce, and return 2xx. An intervening POST elsewhere, a later success with a
+different payload, or any non-401 burn does not satisfy the proof. Endpoint
+declarations are checked per client: each client must itself send every
+endpoint class it declares. Output: one
+`RESULT <client> <step> PASS|FAIL|SKIP` line per step, transcripts under
+`$INTEROP_WORK/out` (proxy log = every request the client actually sent).
+Transcripts include the run's throwaway EAB HMAC keys in client argv; they are
+random per run and bound to a fake CA, so the logs are safe to share, but they
+are not secret-free. CI
+runs it on every PR (`.github/workflows/interop.yml`).
+
+Known limits of the badNonce proof: with `INJECT_BAD_NONCE_EVERY=1` an
+injection can land on a request the scenario expects to be refused (acme.sh's
+post-deactivation order), whose retry is then a deliberate 401, so that knob
+does not pass the full suite; the default (3) and CI are unaffected. A
+`docker run` failure that exits 1 (e.g. daemon unreachable) is
+indistinguishable from a client exiting 1 and is reported as a client FAIL.
+
+Coverage gaps, stated rather than implied: certbot has no keyChange; the lego
+CLI has no account deactivation; after deactivation certbot (which deleted its
+local account and would try a fresh registration) and Posh-ACME (which refuses
+locally) send no request with the old key, so only acme.sh proves the
+server-side refusal. No stock client in this harness sends `GET /acme/new-nonce`
+or `POST /acme/acct/{id}/orders`; the endpoint inventory reports those two as
+explicit SKIPs. All other endpoint classes follow the selected-client union
+rule above. Each run also asserts, per client, that every step the scenario
+declares reported and that the container exited 0. Exit 124 from the per-client
+timeout is a client FAIL. Docker/timeout execution statuses 125/126/127 are
+harness infrastructure ERRORs, suppress the incomplete inventory judgment, and
+make the harness exit 2 rather than recording a client failure.
+"No real CA" is exact; "offline" is not — the runner pulls the pinned images
+and Posh-ACME from PSGallery. acme.sh must be told `--extended-key-usage serverAuth`
+(its default CSR also asks for clientAuth, which the RA refuses by design).
+
+**Then on the lab RA**, for the candidate artifact: point one maintained
+third-party client — acme.sh or Posh-ACME, in addition to the Certify the Web
+runs in §A.2 — at the lab and repeat the same inventory, including **one key
+rollover and one issuance with the rolled key**. Record client version and
+transcript as in §A.2.
+
+**Rule:** a step where a stock client fails and the in-repo hand-rolled client
+passes is a **server finding by default**, not a client bug, and earns a
+regression test written against the client's transcript. The first local run
+(2026-10-01, against `ed1bab5`) found four that way: keyChange's inner nonce
+(WI-041), missing Replay-Nonce (WI-042 — certbot could not even register),
+the challenge `up` link (WI-046), and a false RFC citation behind revokeCert's
+idempotent 200 (WI-047).
+
 ### A.3 The phase-L blackhole, and proving the instrument first
 
 The queue/drain phases need the CA's inbound TCP/443 blocked from the RA so
