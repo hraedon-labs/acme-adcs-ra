@@ -1,4 +1,5 @@
 #!/bin/sh
+# ENDPOINTS: directory new-nonce-head new-acct acct-post new-order order-post-as-get authz challenge finalize cert revoke-cert key-change
 CLIENT=acme.sh
 . /harness/clients/lib.sh
 mkdir -p /w/webroot

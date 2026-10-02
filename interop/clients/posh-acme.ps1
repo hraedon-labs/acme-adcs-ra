@@ -1,4 +1,5 @@
 # Posh-ACME scenario (PowerShell 7, mcr.microsoft.com/powershell).
+# ENDPOINTS: directory new-nonce-head new-acct acct-post new-order order-post-as-get authz challenge finalize cert revoke-cert key-change
 $ErrorActionPreference = 'Stop'
 $client = 'posh-acme'
 # Step <name> ok <body>              PASS when the body does not throw

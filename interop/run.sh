@@ -24,6 +24,115 @@
 # Exit:   0 = every expected step passed; 1 = at least one FAIL; 2 = harness error
 set -Eeuo pipefail
 
+expected_steps() {
+    case "$1" in
+        *.ps1) sed -nE "s/^Step '([a-z0-9-]+)'.*/\1/p" "$1" ;;
+        *)     sed -nE 's/^(step|refused|skip) ([a-z0-9-]+) .*/\2/p' "$1" ;;
+    esac
+}
+
+declared_endpoints() {
+    sed -nE 's/^# ENDPOINTS:[[:space:]]*(.*)$/\1/p' "$1" | tr ' ' '\n' | sed '/^$/d'
+}
+
+check_badnonce_window() {
+    awk '
+        function value(name,    i, prefix) {
+            prefix = name "="
+            for (i = 2; i <= NF; i++) {
+                if (index($i, prefix) == 1) return substr($i, length(prefix) + 1)
+            }
+            return ""
+        }
+        function response_status(    i) {
+            for (i = 2; i < NF; i++) if ($i == "->") return $(i + 1) + 0
+            return 0
+        }
+        function add_reason(event_number, reason) {
+            failures++
+            detail = detail (detail == "" ? "" : "; ") "injection=" event_number " " reason
+        }
+        $1 == "INJECT" {
+            injections++
+            inject_path[injections] = value("path")
+            inject_nonce[injections] = value("nonce")
+            inject_payload[injections] = value("payload")
+            burn_status[injections] = response_status()
+            next
+        }
+        $1 == "AFTER-INJECT" {
+            path = value("path")
+            nonce = value("nonce")
+            payload = value("payload")
+            matched = 0
+            for (i = 1; i <= injections; i++) {
+                if (!after_seen[i] && inject_path[i] == path &&
+                    inject_nonce[i] == nonce && inject_payload[i] == payload) {
+                    after_seen[i] = 1
+                    after_status[i] = response_status()
+                    after_type[i] = value("type")
+                    matched = 1
+                    break
+                }
+            }
+            if (!matched) stray_after++
+            next
+        }
+        $1 == "POST" {
+            path = value("path")
+            for (i = 1; i <= injections; i++) {
+                if (after_seen[i] && !retry_seen[i] && inject_path[i] == path) {
+                    retry_seen[i] = 1
+                    retry_nonce[i] = value("nonce")
+                    retry_payload[i] = value("payload")
+                    retry_status[i] = response_status()
+                }
+            }
+            next
+        }
+        END {
+            if (injections == 0) {
+                print "FAIL (no injection reached this client)"
+                exit
+            }
+            for (i = 1; i <= injections; i++) {
+                if (burn_status[i] != 401)
+                    add_reason(i, "burn-status=" burn_status[i] " expected=401")
+                if (!after_seen[i]) {
+                    add_reason(i, "missing matching AFTER-INJECT for path/nonce/payload")
+                    continue
+                }
+                if (after_status[i] != 400 ||
+                    after_type[i] != "urn:ietf:params:acme:error:badNonce")
+                    add_reason(i, "genuine-status=" after_status[i] " type=" after_type[i] " expected=400/badNonce")
+                if (!retry_seen[i]) {
+                    add_reason(i, "missing next same-path POST retry")
+                    continue
+                }
+                if (retry_payload[i] != inject_payload[i])
+                    add_reason(i, "retry payload differs")
+                if (retry_nonce[i] == inject_nonce[i] || retry_nonce[i] == "")
+                    add_reason(i, "retry nonce was not replaced")
+                if (retry_status[i] < 200 || retry_status[i] >= 300)
+                    add_reason(i, "retry-status=" retry_status[i] " expected=2xx")
+            }
+            if (stray_after > 0) {
+                failures++
+                detail = detail (detail == "" ? "" : "; ") stray_after " unmatched AFTER-INJECT marker(s)"
+            }
+            if (failures > 0)
+                print "FAIL (" detail ")"
+            else
+                print "PASS (injections=" injections " causal retries=" injections ")"
+        }
+    ' "$1"
+}
+
+# Parser functions are intentionally sourceable for focused transcript tests.
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then
+    return 0
+fi
+
 on_err() {
     local status=$?
     local line="$1"
@@ -137,7 +246,7 @@ if [ "${ready:-0}" != 1 ]; then
 fi
 
 run_client() {
-    local c="$1" image entry script proxy_before proxy_after window
+    local c="$1" image entry script proxy_before proxy_after window infra_error=0
     case "$c" in
         certbot)   image="$CERTBOT_IMAGE"; entry=sh;   script=/harness/clients/certbot.sh ;;
         lego)      image="$LEGO_IMAGE";    entry=sh;   script=/harness/clients/lego.sh ;;
@@ -160,20 +269,30 @@ run_client() {
         -e POSH_ACME_VERSION="$POSH_ACME_VERSION" \
         "$image" "${args[@]}" "$script" >"$WORK/out/$c.log" 2>&1 || rc=$?
     grep '^RESULT ' "$WORK/out/$c.log" || true
-    # The scenario script is the inventory: every step it declares must have
-    # reported, and the container must have exited 0. A client that prints one
-    # PASS and then crashes is a FAIL, not a short green run.
-    local s
-    local -a steps=()
-    mapfile -t steps < <(expected_steps "$REPO/interop/clients/$(basename "$script")")
-    if [ "${#steps[@]}" -eq 0 ]; then
-        echo "RESULT $c scenario FAIL (zero declared steps)"
-    fi
-    for s in "${steps[@]}"; do
-        grep -Eq "^RESULT [^ ]+ $s (PASS|FAIL|SKIP)" "$WORK/out/$c.log" \
-            || echo "RESULT $c $s FAIL (step never reported; see $WORK/out/$c.log)"
-    done
-    [ "$rc" -eq 0 ] || echo "RESULT $c container FAIL (exit $rc; see $WORK/out/$c.log)"
+    case "$rc" in
+        125|126|127)
+            infra_error=1
+            echo "RESULT $c container ERROR (infrastructure exit $rc; see $WORK/out/$c.log)"
+            ;;
+        *)
+            # The scenario script is the inventory: every step it declares
+            # must have reported. A client that prints one PASS and then
+            # crashes is a FAIL, not a short green run. Infrastructure exits
+            # are handled above and must not be mislabeled as client failures.
+            local s
+            local -a steps=()
+            mapfile -t steps < <(expected_steps "$REPO/interop/clients/$(basename "$script")")
+            if [ "${#steps[@]}" -eq 0 ]; then
+                echo "RESULT $c scenario FAIL (zero declared steps)"
+            fi
+            for s in "${steps[@]}"; do
+                grep -Eq "^RESULT [^ ]+ $s (PASS|FAIL|SKIP)" "$WORK/out/$c.log" \
+                    || echo "RESULT $c $s FAIL (step never reported; see $WORK/out/$c.log)"
+            done
+            [ "$rc" -eq 0 ] \
+                || echo "RESULT $c container FAIL (exit $rc; see $WORK/out/$c.log)"
+            ;;
+    esac
     docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1
     proxy_after=$(wc -l <"$WORK/out/proxy.log")
     : >"$window"
@@ -182,74 +301,39 @@ run_client() {
     fi
     cat "$window" >>"$WORK/out/proxy-clients.log"
     # Attribute injection proof to this client's exact proxy-log window.
-    if [ "$INJECT" -gt 0 ]; then
-        local burns after bad retries missing
-        read -r burns after bad retries missing < <(
-            awk '
-                $1 == "INJECT" { burns++ }
-                $1 == "AFTER-INJECT" {
-                    after++
-                    path = $2
-                    type = $5
-                    sub(/^type=/, "", type)
-                    if ($4 != 400 || type != "urn:ietf:params:acme:error:badNonce") bad++
-                    pending[path]++
-                    next
-                }
-                $1 == "POST" {
-                    path = $2
-                    status = 0
-                    for (i = 3; i < NF; i++) if ($i == "->") status = $(i + 1)
-                    if (pending[path] > 0 && status >= 200 && status < 300) {
-                        pending[path]--
-                        retries++
-                    }
-                }
-                END {
-                    missing = after - retries
-                    printf "%d %d %d %d %d\n", burns, after, bad, retries, missing
-                }
-            ' "$window"
-        )
-        if [ "$burns" -lt 1 ]; then
-            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after retries=$retries; no injection reached this client)"
-        elif [ "$after" -ne "$burns" ]; then
-            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after retries=$retries; forwarded-request proof count differs)"
-        elif [ "$bad" -gt 0 ]; then
-            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after invalid=$bad retries=$retries; expected 400 badNonce)"
-        elif [ "$missing" -gt 0 ]; then
-            echo "RESULT $c badnonce-coverage FAIL (burns=$burns after=$after retries=$retries missing=$missing; expected later same-path 2xx)"
-        else
-            echo "RESULT $c badnonce-coverage PASS (burns=$burns after=$after retries=$retries)"
-        fi
+    if [ "$INJECT" -gt 0 ] && [ "$infra_error" -eq 0 ]; then
+        echo "RESULT $c badnonce-coverage $(check_badnonce_window "$window")"
     fi
 }
 
-expected_steps() {
-    case "$1" in
-        *.ps1) sed -nE "s/^Step '([a-z0-9-]+)'.*/\1/p" "$1" ;;
-        *)     sed -nE 's/^(step|refused|skip) ([a-z0-9-]+) .*/\2/p' "$1" ;;
-    esac
-}
-
 inventory_check() {
-    local endpoint pattern count
+    local endpoint pattern count selected scenario declared
+    declare -A required=()
+    for selected in "${CLIENTS[@]}"; do
+        case "$selected" in
+            certbot|lego|acmesh) scenario="$REPO/interop/clients/$selected.sh" ;;
+            posh-acme) scenario="$REPO/interop/clients/posh-acme.ps1" ;;
+            *) echo "RESULT inventory declarations ERROR (unknown client $selected)"; return 2 ;;
+        esac
+        while IFS= read -r declared; do
+            required[$declared]=1
+        done < <(declared_endpoints "$scenario")
+    done
     while IFS='|' read -r endpoint pattern; do
         count=$(grep -Ec "$pattern" "$WORK/out/proxy-clients.log" || true)
-        if [ "$count" -gt 0 ]; then
-            echo "RESULT inventory $endpoint PASS ($count requests)"
+        if [[ "$endpoint" == new-nonce-get || "$endpoint" == acct-orders-list ]]; then
+            echo "RESULT inventory $endpoint SKIP (no stock client in this harness exercises it)"
+        elif [ "${required[$endpoint]+declared}" = declared ]; then
+            if [ "$count" -gt 0 ]; then
+                echo "RESULT inventory $endpoint PASS ($count requests)"
+            else
+                echo "RESULT inventory $endpoint FAIL (declared by selected client(s), 0 requests)"
+            fi
         else
-            case "$endpoint" in
-                new-nonce-get|acct-orders-list)
-                    echo "RESULT inventory $endpoint SKIP (no stock client in this harness exercises it)"
-                    ;;
-                *)
-                    echo "RESULT inventory $endpoint FAIL (0 requests)"
-                    ;;
-            esac
+            echo "RESULT inventory $endpoint SKIP (not declared by selected client(s))"
         fi
     done <<'EOF'
-directory-get|^GET /directory([?][^ ]*)? ct=
+directory|^GET /directory([?][^ ]*)? ct=
 new-nonce-head|^HEAD /acme/new-nonce([?][^ ]*)? ct=
 new-nonce-get|^GET /acme/new-nonce([?][^ ]*)? ct=
 new-acct|^POST /acme/new-acct([?][^ ]*)? ct=
@@ -274,11 +358,18 @@ for c in "${CLIENTS[@]}"; do
 done
 
 docker logs "$RUN_ID-proxy" >"$WORK/out/proxy.log" 2>&1
-inventory_check | tee -a "$WORK/out/results.txt"
+if grep -q ' container ERROR ' "$WORK/out/results.txt"; then
+    echo "RESULT inventory coverage SKIP (client infrastructure error)" \
+        | tee -a "$WORK/out/results.txt"
+else
+    inventory_check | tee -a "$WORK/out/results.txt"
+fi
 injected=$(grep -c '^INJECT ' "$WORK/out/proxy.log" || true)
 echo "badNonce injections performed: $injected (every $INJECT POSTs)"
 pass=$(grep -Ec ' PASS($| \()' "$WORK/out/results.txt" || true)
 fail=$(grep -c ' FAIL' "$WORK/out/results.txt" || true)
 skip=$(grep -c ' SKIP' "$WORK/out/results.txt" || true)
-echo "SUMMARY pass=$pass fail=$fail skip=$skip  (transcripts: $WORK/out)"
+error=$(grep -c ' ERROR' "$WORK/out/results.txt" || true)
+echo "SUMMARY pass=$pass fail=$fail skip=$skip error=$error  (transcripts: $WORK/out)"
+[ "$error" -eq 0 ] || exit 2
 [ "$fail" -eq 0 ] || exit 1

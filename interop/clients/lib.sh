@@ -5,6 +5,12 @@
 #                                          refusal for the wrong reason is a FAIL)
 #   skip    <name> <why>                   the client cannot drive this endpoint
 CLIENT="${CLIENT:-unknown}"
+_out=""
+cleanup_step_tmp() {
+    [ -z "$_out" ] || rm -f "$_out"
+}
+trap cleanup_step_tmp EXIT
+
 step() {
     _out="$(mktemp)"
     name="$1"; shift
@@ -13,6 +19,7 @@ step() {
     cat "$_out"
     if [ $rc -eq 0 ]; then echo "RESULT $CLIENT $name PASS"; else echo "RESULT $CLIENT $name FAIL (exit $rc)"; fi
     rm -f "$_out"
+    _out=""
 }
 refused() {
     _out="$(mktemp)"
@@ -26,5 +33,6 @@ refused() {
         echo "RESULT $CLIENT $name FAIL (exit $rc; refusal reason not matched)"
     fi
     rm -f "$_out"
+    _out=""
 }
 skip() { echo "RESULT $CLIENT $1 SKIP ($2)"; }

@@ -120,10 +120,21 @@ in-memory signer (`interop/ra_harness_entry.py`, outside `src/` and never in the
 wheel or sdist). Each client drives what it supports: directory, new-nonce HEAD,
 new-account (EAB), account update, new-order, authz POST-as-GET, challenge,
 finalize, order polling, certificate download, **keyChange**, revokeCert, and
-deactivation. The proxy burns the nonce of every Nth JWS POST before forwarding
-it, so **every injecting run (the default, and CI) exercises each client's
-badNonce-retry path**; each injection must produce `badNonce` and a successful
-retry to the same endpoint. Output: one
+deactivation. Each scenario declares the endpoint classes it actually drives;
+the inventory expectation is the union of declarations for the clients selected
+on the command line. A declared endpoint with no observed request is a FAIL. An
+endpoint not declared by any selected client is a SKIP, not evidence of a
+missing request.
+
+The proxy burns the nonce of every Nth JWS POST before forwarding it, so
+**every injecting run (the default, and CI) exercises each selected client's
+badNonce-retry path**. Every injection is checked independently inside that
+client's proxy-log line window. The poisoned copy must return 401; the genuine
+request with the same path, protected-header nonce, and 12-hex SHA-256 of the
+JWS `payload` member must return 400
+`urn:ietf:params:acme:error:badNonce`; and the next POST to that path must carry
+the same payload hash, a different nonce, and return 2xx. A later success with a
+different payload, or any non-401 burn, does not satisfy the proof. Output: one
 `RESULT <client> <step> PASS|FAIL|SKIP` line per step, transcripts under
 `$INTEROP_WORK/out` (proxy log = every request the client actually sent).
 Transcripts include the run's throwaway EAB HMAC keys in client argv; they are
@@ -137,11 +148,12 @@ local account and would try a fresh registration) and Posh-ACME (which refuses
 locally) send no request with the old key, so only acme.sh proves the
 server-side refusal. No stock client in this harness sends `GET /acme/new-nonce`
 or `POST /acme/acct/{id}/orders`; the endpoint inventory reports those two as
-explicit SKIPs and fails on any other unexercised endpoint class. Each run also
-asserts, per client, that every step the scenario declares reported, that the
-container exited 0, and (when injecting)
-that at least one burned nonce reached that client, produced a 400 `badNonce`
-response, and was followed by a successful retry to the same path.
+explicit SKIPs. All other endpoint classes follow the selected-client union
+rule above. Each run also asserts, per client, that every step the scenario
+declares reported and that the container exited 0. Exit 124 from the per-client
+timeout is a client FAIL. Docker/timeout execution statuses 125/126/127 are
+harness infrastructure ERRORs, suppress the incomplete inventory judgment, and
+make the harness exit 2 rather than recording a client failure.
 "No real CA" is exact; "offline" is not — the runner pulls the pinned images
 and Posh-ACME from PSGallery. acme.sh must be told `--extended-key-usage serverAuth`
 (its default CSR also asks for clientAuth, which the RA refuses by design).

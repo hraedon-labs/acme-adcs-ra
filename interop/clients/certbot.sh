@@ -1,6 +1,7 @@
 #!/bin/sh
 # certbot (acme-python) scenario. acme-python implements no keyChange, so
 # rollover is reported SKIP for this client, not silently omitted.
+# ENDPOINTS: directory new-nonce-head new-acct acct-post new-order order-post-as-get authz challenge finalize cert revoke-cert
 CLIENT=certbot
 . /harness/clients/lib.sh
 export REQUESTS_CA_BUNDLE=/pki/ca.pem
