@@ -301,6 +301,9 @@ def test_duplicate_content_type_fields_are_refused_in_either_order(
         "application/jose+json" + " ;" * 60 + "!",
         "application/jose+json" + "; " * 20000 + "!",
     ],
+    # Short ids: the default id embeds the value, and a 40 kB test id overflows
+    # Windows' environment-variable limit (PYTEST_CURRENT_TEST) in CI.
+    ids=["semi-space-40", "space-semi-space-40", "space-semi-60", "semi-space-20000"],
 )
 def test_content_type_parse_is_linear_on_hostile_input(value: str) -> None:
     """DeepSeek round 4: the first grammar regex backtracked exponentially on
