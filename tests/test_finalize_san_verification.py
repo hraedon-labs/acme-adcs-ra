@@ -174,8 +174,8 @@ def _make_test_config(tmp_path: Any) -> RAConfig:
         base_url="http://testserver",
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
-        eab_allowlist=[EABEntry(kid="kid-001", mac_key="c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE")],
-        san_scopes={"kid-001": {"dns_patterns": ["srv01.WORK-DOMAIN.local"]}},
+        eab_allowlist=[EABEntry(kid="kid-001-0123456789abcdef", mac_key="c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE")],
+        san_scopes={"kid-001-0123456789abcdef": {"dns_patterns": ["srv01.WORK-DOMAIN.local"]}},
         adcs_template="ACME-ServerAuth",
     )
 
@@ -212,7 +212,7 @@ def _full_round_trip_to_finalize(
     client: TestClient, config: RAConfig, key: rsa.RSAPrivateKey, csr_der: bytes
 ) -> Any:
     ac = HandRolledAcmeClient(client, config.base_url, key)
-    ac.new_account(eab_kid="kid-001", eab_mac_key=config.eab_key_bytes("kid-001"))
+    ac.new_account(eab_kid="kid-001-0123456789abcdef", eab_mac_key=config.eab_key_bytes("kid-001-0123456789abcdef"))
     order = ac.new_order(["srv01.WORK-DOMAIN.local"]).json()
     for authz_url in order["authorizations"]:
         authz = ac.get_authorization(authz_url).json()

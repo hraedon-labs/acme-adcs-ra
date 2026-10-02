@@ -17,16 +17,21 @@ class AcmeError(Exception):
         status: int = 400,
         title: str | None = None,
         headers: dict[str, str] | None = None,
+        extra: dict[str, object] | None = None,
     ) -> None:
         self.typ = typ
         self.detail = detail
         self.status = status
         self.title = title or typ.rsplit(":", 1)[-1]
         self.headers = headers or {}
+        # Type-specific problem members (RFC 7807 extension members), e.g. the
+        # "algorithms" array RFC 8555 §6.2 requires on badSignatureAlgorithm.
+        self.extra = dict(extra or {})
         super().__init__(detail)
 
-    def to_problem(self) -> dict[str, str | int]:
+    def to_problem(self) -> dict[str, object]:
         return {
+            **self.extra,
             "type": self.typ,
             "title": self.title,
             "detail": self.detail,
@@ -172,4 +177,38 @@ def rate_limited(
         detail,
         status=429,
         headers=headers,
+    )
+
+
+def order_not_ready(detail: str = "order is not ready for finalization") -> AcmeError:
+    """RFC 8555 §7.4: finalize on an order not in ``ready`` MUST be 403
+    ``orderNotReady``; the client then POST-as-GETs the order for its state."""
+    return AcmeError(
+        "urn:ietf:params:acme:error:orderNotReady",
+        detail,
+        status=403,
+    )
+
+
+def bad_signature_algorithm(
+    detail: str, *, algorithms: list[str]
+) -> AcmeError:
+    """RFC 8555 §6.2: an unsupported JWS ``alg`` MUST be 400
+    ``badSignatureAlgorithm`` with an ``algorithms`` array of supported values."""
+    return AcmeError(
+        "urn:ietf:params:acme:error:badSignatureAlgorithm",
+        detail,
+        status=400,
+        extra={"algorithms": list(algorithms)},
+    )
+
+
+def unsupported_media_type(detail: str) -> AcmeError:
+    """RFC 8555 §6.2: a POST whose Content-Type is not ``application/jose+json``
+    MUST be answered 415. RFC 8555 names no problem type for it; ``malformed``
+    is the closest registered one."""
+    return AcmeError(
+        "urn:ietf:params:acme:error:malformed",
+        detail,
+        status=415,
     )

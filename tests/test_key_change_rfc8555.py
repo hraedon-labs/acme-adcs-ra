@@ -33,7 +33,7 @@ from .test_key_change import _make_app, _make_config
 
 BASE = "http://testserver"
 KEY_CHANGE_URL = f"{BASE}/acme/key-change"
-_KID = "kid-001"
+_KID = "kid-001-0123456789abcdef"
 
 
 def _setup(tmp_path: Path) -> tuple[TestClient, Store, HandRolledAcmeClient]:
@@ -43,9 +43,9 @@ def _setup(tmp_path: Path) -> tuple[TestClient, Store, HandRolledAcmeClient]:
     acme = HandRolledAcmeClient(
         client, BASE, rsa.generate_private_key(public_exponent=65537, key_size=2048)
     )
-    mac_key = config.eab_key_bytes("kid-001")
+    mac_key = config.eab_key_bytes("kid-001-0123456789abcdef")
     assert mac_key is not None
-    assert acme.new_account("kid-001", mac_key).status_code == 201
+    assert acme.new_account("kid-001-0123456789abcdef", mac_key).status_code == 201
     return client, store, acme
 
 

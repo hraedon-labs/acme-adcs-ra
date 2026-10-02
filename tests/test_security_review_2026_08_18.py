@@ -611,7 +611,7 @@ class TestPendingCaRequestsAreDurablyTracked:
     def _processing_order_with_pending(self, tmp_path: Path) -> tuple[Store, str]:
         store = Store(tmp_path / "ra.db")
         account = store.create_account(
-            jwk=placeholder_rsa_jwk("pending-f4"), eab_kid="kid-001"
+            jwk=placeholder_rsa_jwk("pending-f4"), eab_kid="kid-001-0123456789abcdef"
         )
         order = store.create_order_with_authz(
             account_id=account.id,
@@ -684,7 +684,7 @@ class TestReclaimRefusesAPendingCaRequest:
         ctx = client.app.state.context  # type: ignore[attr-defined]
         store = ctx.store
         account = store.create_account(
-            jwk=placeholder_rsa_jwk("reclaim-f4"), eab_kid="kid-001"
+            jwk=placeholder_rsa_jwk("reclaim-f4"), eab_kid="kid-001-0123456789abcdef"
         )
         order = store.create_order_with_authz(
             account_id=account.id,
@@ -856,11 +856,11 @@ class TestJwkIdentityIsCanonical:
         deactivation."""
         store = Store(tmp_path / "ra.db")
         jwk = _real_rsa_jwk()
-        first = store.create_account(jwk=jwk, eab_kid="kid-001")
+        first = store.create_account(jwk=jwk, eab_kid="kid-001-0123456789abcdef")
 
         twin_jwk = {**jwk, "e": _b64u(b"\x00\x01\x00\x01")}
         with pytest.raises(JWSValidationError):
-            store.create_account(jwk=twin_jwk, eab_kid="kid-001")
+            store.create_account(jwk=twin_jwk, eab_kid="kid-001-0123456789abcdef")
 
         # And the twin encoding does not resolve to a *different* account.
         with pytest.raises(JWSValidationError):
@@ -879,7 +879,7 @@ class TestLegacyAccountsAreNormalizedOnUpgrade:
         with sqlite3.connect(str(db_path)) as conn:
             conn.execute(
                 "INSERT INTO accounts (id, status, jwk_json, eab_kid, contact, "
-                "created_at, jwk_thumbprint) VALUES (?, 'valid', ?, 'kid-001', "
+                "created_at, jwk_thumbprint) VALUES (?, 'valid', ?, 'kid-001-0123456789abcdef', "
                 "'[]', '2026-08-18T00:00:00+00:00', ?)",
                 ("acct-legacy", json.dumps(jwk), "legacy-thumbprint"),
             )
@@ -904,7 +904,7 @@ class TestLegacyAccountsAreNormalizedOnUpgrade:
         db_path = tmp_path / "ra.db"
         store = Store(db_path)
         jwk = _real_rsa_jwk()
-        created = store.create_account(jwk=jwk, eab_kid="kid-001")
+        created = store.create_account(jwk=jwk, eab_kid="kid-001-0123456789abcdef")
         before = store.get_account(created.id).jwk_json
 
         reopened = Store(db_path)

@@ -538,9 +538,9 @@ def _config(tmp_path: Path, *, crl_url: str = "", require: bool = False) -> RACo
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
         eab_allowlist=[
-            EABEntry(kid="kid-001", mac_key="c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE")
+            EABEntry(kid="kid-001-0123456789abcdef", mac_key="c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE")
         ],
-        san_scopes={"kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local"]}},
+        san_scopes={"kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local"]}},
         adcs_template="ACME-ServerAuth",
         admin_token=SecretStr(_ADMIN_TOKEN),
         revocation_confirm_token=SecretStr(_CONFIRM_TOKEN),

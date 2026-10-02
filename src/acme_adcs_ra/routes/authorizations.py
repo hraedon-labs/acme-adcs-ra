@@ -9,6 +9,7 @@ from acme_adcs_ra.acme_errors import malformed, server_internal, unauthorized
 from acme_adcs_ra.app_state import (
     ServerContext,
     _audit,
+    _url,
     authenticate_account,
     get_context,
 )
@@ -56,8 +57,8 @@ def _maybe_ready_order(ctx: ServerContext, order_id: str) -> None:
     if order.status != OrderStatus.PENDING:
         return
     # LOW-2: do not advance an already-expired order to 'ready'. The sweep and
-    # the finalize path both handle expired orders (finalize rejects with 410
-    # and flips to 'invalid'), so a transient 'ready' for an order whose
+    # the finalize path both handle expired orders (finalize rejects with 403
+    # orderNotReady and flips to 'invalid'), so a transient 'ready' for an order whose
     # 'expires' is already past serves no client and could only confuse a
     # polling client into a finalize that would correctly reject. Defense in
     # depth, not a state-machine correctness fix.
@@ -74,6 +75,14 @@ def _maybe_ready_order(ctx: ServerContext, order_id: str) -> None:
     # If the CAS does not apply (returns False), the order is no longer
     # pending — simply return; whatever moved it owns the state.
     ctx.store.transition_pending_to_ready(order_id)
+
+
+def _up_link(ctx: ServerContext, authz_id: str) -> dict[str, str]:
+    """RFC 8555 §7.1: the "up" link relation points a challenge at its
+    authorization (§7.5.1). acme-python (certbot) requires it on the challenge
+    response and aborts issuance without it ("up" Link header missing) — found
+    by the stock-client interop harness (WI-046)."""
+    return {"Link": f'<{_url(ctx, f"/acme/authz/{authz_id}")}>;rel="up"'}
 
 
 @router.post("/acme/challenge/{challenge_id}")
@@ -107,7 +116,9 @@ async def post_challenge(
     # that happened once. Return the current object; the original validation
     # keeps its row.
     if challenge.status == "valid":
-        return JSONResponse(content=_challenge_to_json(challenge))
+        return JSONResponse(
+            content=_challenge_to_json(challenge), headers=_up_link(ctx, authz.id)
+        )
 
     # ------------------------------------------------------------------
     # Enterprise trust decision point.
@@ -140,4 +151,6 @@ async def post_challenge(
         outcome="success",
         details={"challenge_id": challenge_id, "authz_id": authz.id},
     )
-    return JSONResponse(content=_challenge_to_json(refreshed_challenge))
+    return JSONResponse(
+        content=_challenge_to_json(refreshed_challenge), headers=_up_link(ctx, authz.id)
+    )

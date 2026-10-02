@@ -46,7 +46,7 @@ def _order_in_processing(
 ) -> str:
     """An account + order driven into `processing`, optionally with a CA marker."""
     account = store.create_account(
-        jwk=placeholder_ec_jwk("reclaim-atomicity"), eab_kid="kid-1"
+        jwk=placeholder_ec_jwk("reclaim-atomicity"), eab_kid="kid-1-0123456789abcdef"
     )
     order = store.create_order_with_authz(
         account_id=account.id,

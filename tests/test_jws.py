@@ -249,13 +249,13 @@ class TestEABVerify:
     def test_valid_eab_hs256(self, rsa_key: rsa.RSAPrivateKey) -> None:
         account_jwk = _jwk(rsa_key)
         mac_key = b"super-secret-key-32-bytes-long!!"
-        eab_jws = _make_eab_jws(account_jwk, "kid-001", mac_key)
-        assert verify_eab_jws(eab_jws, account_jwk, mac_key) == "kid-001"
+        eab_jws = _make_eab_jws(account_jwk, "kid-001-0123456789abcdef", mac_key)
+        assert verify_eab_jws(eab_jws, account_jwk, mac_key) == "kid-001-0123456789abcdef"
 
     def test_unknown_alg_rejected(self, rsa_key: rsa.RSAPrivateKey) -> None:
         account_jwk = _jwk(rsa_key)
         mac_key = b"super-secret-key-32-bytes-long!!"
-        protected_b64 = _b64url_encode_dict({"alg": "HS128", "kid": "kid-001"})
+        protected_b64 = _b64url_encode_dict({"alg": "HS128", "kid": "kid-001-0123456789abcdef"})
         payload_b64 = _b64url_encode_dict(account_jwk)
         eab_jws = {
             "protected": protected_b64,
@@ -268,14 +268,14 @@ class TestEABVerify:
     def test_wrong_mac_rejected(self, rsa_key: rsa.RSAPrivateKey) -> None:
         account_jwk = _jwk(rsa_key)
         mac_key = b"super-secret-key-32-bytes-long!!"
-        eab_jws = _make_eab_jws(account_jwk, "kid-001", mac_key)
+        eab_jws = _make_eab_jws(account_jwk, "kid-001-0123456789abcdef", mac_key)
         with pytest.raises(JWSValidationError, match="MAC verification failed"):
             verify_eab_jws(eab_jws, account_jwk, b"wrong-key-32-bytes-long!!!!!!!")
 
     def test_payload_mismatch_rejected(self, rsa_key: rsa.RSAPrivateKey) -> None:
         account_jwk = _jwk(rsa_key)
         mac_key = b"super-secret-key-32-bytes-long!!"
-        eab_jws = _make_eab_jws(account_jwk, "kid-001", mac_key)
+        eab_jws = _make_eab_jws(account_jwk, "kid-001-0123456789abcdef", mac_key)
         other_jwk = dict(account_jwk)
         other_jwk["n"] = other_jwk["n"][:-1] + "X"
         with pytest.raises(JWSValidationError, match="does not match"):
@@ -284,7 +284,7 @@ class TestEABVerify:
     def test_url_binding_mismatch_rejected(self, rsa_key: rsa.RSAPrivateKey) -> None:
         account_jwk = _jwk(rsa_key)
         mac_key = b"super-secret-key-32-bytes-long!!"
-        eab_jws = _make_eab_jws(account_jwk, "kid-001", mac_key)
+        eab_jws = _make_eab_jws(account_jwk, "kid-001-0123456789abcdef", mac_key)
         protected = json.loads(
             __import__("base64").urlsafe_b64decode(
                 eab_jws["protected"] + "=" * (-len(eab_jws["protected"]) % 4)
@@ -321,11 +321,11 @@ class TestEABVerify:
         account_jwk = _jwk(rsa_key)
         mac_key = b"super-secret-key-32-bytes-long!!"
         # EAB JWS payload contains the bare JWK (no alg).
-        eab_jws = _make_eab_jws(account_jwk, "kid-001", mac_key)
+        eab_jws = _make_eab_jws(account_jwk, "kid-001-0123456789abcdef", mac_key)
         # account_jwk_with_alg has an extra 'alg' field — must still match.
         account_jwk_with_alg = dict(account_jwk, alg="RS256")
         result = verify_eab_jws(eab_jws, account_jwk_with_alg, mac_key)
-        assert result == "kid-001"
+        assert result == "kid-001-0123456789abcdef"
 
 
 # ---------------------------------------------------------------------------

@@ -6,6 +6,7 @@ This module only **verifies** signatures; it never signs anything.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,12 +15,16 @@ from fastapi import Request
 from acme_adcs_ra.acme_errors import (
     bad_nonce,
     bad_public_key,
+    bad_signature_algorithm,
     malformed,
     unauthorized,
+    unsupported_media_type,
 )
 from acme_adcs_ra.http_body import read_body_limited
 from acme_adcs_ra.jws import (
+    SUPPORTED_JWS_ALGORITHMS,
     JWSValidationError,
+    UnsupportedSignatureAlgorithmError,
     _base64url_decode,
     _public_key_from_jwk,
     jwk_thumbprint,
@@ -113,9 +118,70 @@ def _consume_nonce(store: Store, header: dict[str, Any], request_url: str) -> No
         raise bad_nonce(f"invalid or replayed Replay-Nonce for {request_url}")
 
 
+JOSE_JSON = "application/jose+json"
+
+# RFC 9110 §5.6.2 token, §5.6.4 quoted-string, §5.6.6 parameters, §8.3.1
+# media-type. OWS is SP / HTAB. Group 1 is "type/subtype".
+_TCHAR = r"[!#$%&'*+.^_`|~0-9A-Za-z-]"
+_TOKEN = rf"{_TCHAR}+"
+_QUOTED = r'"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*"'
+# A pattern string, not re.compile(): the no-signing architecture guard bans
+# any call named compile() in src/ (dynamic code loading); re caches it anyway.
+#
+# Every OWS quantifier is POSSESSIVE (``*+``). With plain ``*`` the OWS on both
+# sides of ';' and an empty parameter overlap, so "; " * n followed by a
+# rejecting byte had exponentially many parses: ~370 ms at 62 bytes, a hang
+# at ~100 — an unauthenticated DoS reachable before auth, nonce or body
+# (DeepSeek, round 4). Possessive OWS never gives characters back, making the
+# match linear; the length cap below bounds it regardless.
+_MEDIA_TYPE = (
+    rf"[ \t]*+({_TOKEN}/{_TOKEN})"
+    rf"(?:[ \t]*+;[ \t]*+(?:{_TOKEN}=(?:{_TOKEN}|{_QUOTED}))?)*[ \t]*+"
+)
+# No legitimate ACME Content-Type is anywhere near this long.
+_MAX_CONTENT_TYPE_CHARS = 256
+
+
+def _require_jose_json(request: Request) -> None:
+    """RFC 8555 §6.2: a JWS POST MUST be ``application/jose+json``, else 415.
+
+    Checked before the body is read and before any nonce is spent, so a
+    wrong-media-type request costs nothing. Media-type parameters (e.g.
+    ``; charset=utf-8``) are ignored and the type compares case-insensitively,
+    per RFC 9110 §8.3.1. The threat model's CSRF argument leaned on this
+    property while the code did not enforce it (WI-044).
+    """
+    # Exactly one Content-Type field. Starlette's .get() returns the FIRST of
+    # duplicates, so "jose+json, then text/plain" passed while the reverse was
+    # refused — a parser differential with whatever proxy sits in front
+    # (Daybreak Blue, round 1). A singleton field sent twice is not a request
+    # this RA has to interpret.
+    fields = request.headers.getlist("content-type")
+    if len(fields) > 1:
+        raise unsupported_media_type(
+            f"ACME requests must carry exactly one Content-Type field; got {len(fields)}"
+        )
+    raw = fields[0] if fields else ""
+    # Parse the value as ONE RFC 9110 §8.3.1 media type — type "/" subtype
+    # followed by well-formed ";" parameters — instead of splitting text.
+    # Round 2 split at ';' and refused any comma, which still accepted
+    # "application/jose+json; text/plain" (a malformed parameter, ignored)
+    # and wrongly refused a comma inside a quoted parameter value (Daybreak
+    # Blue, round 3). A list (folded duplicates, obs-fold) fails the grammar.
+    match = (
+        re.fullmatch(_MEDIA_TYPE, raw) if len(raw) <= _MAX_CONTENT_TYPE_CHARS else None
+    )
+    if match is None or match.group(1).lower() != JOSE_JSON:
+        raise unsupported_media_type(
+            f"ACME requests must use exactly one Content-Type of {JOSE_JSON} "
+            f"(RFC 8555 §6.2); got {raw or 'none'!r}"
+        )
+
+
 async def _parse_jws_body(
     request: Request, *, max_body_size_bytes: int = 65536
 ) -> dict[str, Any]:
+    _require_jose_json(request)
     body = await read_body_limited(
         request, max_bytes=max_body_size_bytes, what="JWS request"
     )
@@ -178,6 +244,11 @@ def _verify_jws_signature(
     """Verify the JWS signature and return the parsed payload dict."""
     try:
         payload = verify_flattened_jws(jws, public_key)
+    except UnsupportedSignatureAlgorithmError as exc:
+        raise bad_signature_algorithm(
+            f"JWS verification failed: {exc}",
+            algorithms=list(SUPPORTED_JWS_ALGORITHMS),
+        ) from exc
     except JWSValidationError as exc:
         raise unauthorized(f"JWS verification failed: {exc}") from exc
 

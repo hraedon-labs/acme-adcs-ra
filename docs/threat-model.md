@@ -224,7 +224,8 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   the kid is the operator-side one. Both are audited
   (`account-deactivated`, `account-request-denied`).
 - **CSRF / cross-protocol:** ACME POSTs are `application/jose+json` (RFC 8555
-  §6.1) and the body is a key-bound JWS signature. There is no browser-rendered
+  §6.2; enforced since 2026-10-01 — anything else is 415 before the body is
+  read or a nonce spent) and the body is a key-bound JWS signature. There is no browser-rendered
   surface; a same-origin attacker would still need the account key. CSRF is a
   non-issue *because* of JWS + EAB + the network allowlist — not because of a
   CSRF token.
@@ -337,7 +338,10 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   certificate response serves only `valid`.
 - **Only the issuing account may revoke** its own cert (lookup scoped to
   `(serial, account_id)`); cross-account → 404 (no leak). Already-revoked →
-  **200** (RFC §7.6 idempotent). Revoked certs are **not served** (GET → 410
+  **200**, a deliberate deviation: RFC 8555 §7.6 specifies 400
+  `alreadyRevoked`; the RA keeps 200 so a retried revocation that did succeed
+  never reads as a failure (owner decision 2026-10-01, WI-047; precedent:
+  the 2026-08-24 Certify the Web false-failed revocation). Revoked certs are **not served** (GET → 410
   Gone); the order is flipped to `revoked`. **Reason 7 is rejected** (RFC 5280
   reason 7 is "unused" and `certutil` rejects it) — the valid set is
   `{0,1,2,3,4,5,6,8,9,10}`, consistent with `scripts/Revoke-Cert.ps1`, so an

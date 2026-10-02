@@ -37,12 +37,12 @@ def _make_rate_limit_config(
         db_path=tmp_path / "test_ra.db",
         siem_jsonl_path=tmp_path / "test_ra.siem.jsonl",
         eab_allowlist=[
-            EABEntry(kid="kid-001", mac_key=mac_key_b64),
-            EABEntry(kid="kid-002", mac_key="YW5vdGhlci0zMi1ieXRlLW1hYy1rZXktZm9yLXRlc3Rz"),
+            EABEntry(kid="kid-001-0123456789abcdef", mac_key=mac_key_b64),
+            EABEntry(kid="kid-002-0123456789abcdef", mac_key="YW5vdGhlci0zMi1ieXRlLW1hYy1rZXktZm9yLXRlc3Rz"),
         ],
         san_scopes={
-            "kid-001": {"dns_patterns": ["*.WORK-DOMAIN.local"]},
-            "kid-002": {"dns_patterns": ["*.prod.WORK-DOMAIN.local"]},
+            "kid-001-0123456789abcdef": {"dns_patterns": ["*.WORK-DOMAIN.local"]},
+            "kid-002-0123456789abcdef": {"dns_patterns": ["*.prod.WORK-DOMAIN.local"]},
         },
         adcs_template="ACME-ServerAuth",
         admin_token=SecretStr("test-admin-token-0123456789abcdef-32+"),
@@ -105,8 +105,8 @@ def rate_acme_client(
         base_url="http://testserver",
         account_key=key,
     )
-    mac_key = _eab_mac_key(rate_config, "kid-001")
-    resp = client.new_account("kid-001", mac_key)
+    mac_key = _eab_mac_key(rate_config, "kid-001-0123456789abcdef")
+    resp = client.new_account("kid-001-0123456789abcdef", mac_key)
     assert resp.status_code == 201
     return client
 
@@ -149,7 +149,7 @@ class TestPerAccountRateLimit:
         assert ev["details"]["scope"] == "per-account"
         assert ev["details"]["limit"] == 3
         assert ev["details"]["count"] == 3
-        assert ev["details"]["kid"] == "kid-001"
+        assert ev["details"]["kid"] == "kid-001-0123456789abcdef"
         assert ev["details"]["window_seconds"] == 3600
 
     def test_disabled_rate_limit_allows_unlimited(
@@ -160,7 +160,7 @@ class TestPerAccountRateLimit:
         client = TestClient(app)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         acme = HandRolledAcmeClient(client, "http://testserver", key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         for i in range(10):
             resp = acme.new_order([f"srv{i:02d}.WORK-DOMAIN.local"])
@@ -172,13 +172,13 @@ class TestPerKidOverride:
         self, tmp_path: Path
     ) -> None:
         config = _make_rate_limit_config(
-            tmp_path, per_kid=10, overrides={"kid-001": 2}
+            tmp_path, per_kid=10, overrides={"kid-001-0123456789abcdef": 2}
         )
         app, _, _ = _make_app(config)
         client = TestClient(app)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         acme = HandRolledAcmeClient(client, "http://testserver", key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         for i in range(2):
             resp = acme.new_order([f"srv0{i}.WORK-DOMAIN.local"])
@@ -193,13 +193,13 @@ class TestPerKidOverride:
         self, tmp_path: Path
     ) -> None:
         config = _make_rate_limit_config(
-            tmp_path, per_kid=10, overrides={"kid-001": 2}
+            tmp_path, per_kid=10, overrides={"kid-001-0123456789abcdef": 2}
         )
         app, _, _ = _make_app(config)
         client = TestClient(app)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         acme = HandRolledAcmeClient(client, "http://testserver", key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         for i in range(2):
             acme.new_order([f"srv0{i}.WORK-DOMAIN.local"])
@@ -208,7 +208,7 @@ class TestPerKidOverride:
 
         key2 = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         acme2 = HandRolledAcmeClient(client, "http://testserver", key2)
-        acme2.new_account("kid-002", _eab_mac_key(config, "kid-002"))
+        acme2.new_account("kid-002-0123456789abcdef", _eab_mac_key(config, "kid-002-0123456789abcdef"))
         for i in range(5):
             resp = acme2.new_order([f"srv{i:02d}.prod.WORK-DOMAIN.local"])
             assert resp.status_code == 201
@@ -225,7 +225,7 @@ class TestGlobalBackstop:
         client = TestClient(app)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         acme = HandRolledAcmeClient(client, "http://testserver", key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         for i in range(3):
             resp = acme.new_order([f"srv0{i}.WORK-DOMAIN.local"])
@@ -244,7 +244,7 @@ class TestGlobalBackstop:
         client = TestClient(app)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         acme = HandRolledAcmeClient(client, "http://testserver", key)
-        acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
 
         for i in range(2):
             acme.new_order([f"srv0{i}.WORK-DOMAIN.local"])
@@ -263,7 +263,7 @@ class TestStoreCounting:
         _, store, _ = _make_app(config)
         account = store.create_account(
             jwk=placeholder_rsa_jwk("parallel"),
-            eab_kid="kid-001",
+            eab_kid="kid-001-0123456789abcdef",
         )
 
         def create(index: int) -> bool:
@@ -297,7 +297,7 @@ class TestStoreCounting:
 
         account = store.create_account(
             jwk=placeholder_rsa_jwk("x"),
-            eab_kid="kid-001",
+            eab_kid="kid-001-0123456789abcdef",
         )
 
         now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
@@ -314,10 +314,10 @@ class TestStoreCounting:
             conn.execute("UPDATE orders SET created_at = ?", (now_str,))
 
         within = now + timedelta(seconds=30)
-        assert store.count_recent_orders_by_kid("kid-001", 3600, now=within) == 5
+        assert store.count_recent_orders_by_kid("kid-001-0123456789abcdef", 3600, now=within) == 5
 
         future = now + timedelta(seconds=7200)
-        assert store.count_recent_orders_by_kid("kid-001", 3600, now=future) == 0
+        assert store.count_recent_orders_by_kid("kid-001-0123456789abcdef", 3600, now=future) == 0
 
     def test_count_all_recent_orders_with_injected_now(
         self, tmp_path: Path
@@ -328,10 +328,10 @@ class TestStoreCounting:
         now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
         now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         a1 = store.create_account(
-            jwk=placeholder_rsa_jwk("x1"), eab_kid="kid-001",
+            jwk=placeholder_rsa_jwk("x1"), eab_kid="kid-001-0123456789abcdef",
         )
         a2 = store.create_account(
-            jwk=placeholder_rsa_jwk("x2"), eab_kid="kid-002",
+            jwk=placeholder_rsa_jwk("x2"), eab_kid="kid-002-0123456789abcdef",
         )
         for acct in (a1, a2):
             store.create_order_with_authz(
@@ -360,7 +360,7 @@ class TestStoreCounting:
         now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         for i in range(3):
             acct = store.create_account(
-                jwk=placeholder_rsa_jwk(f"x{i}"), eab_kid="kid-001",
+                jwk=placeholder_rsa_jwk(f"x{i}"), eab_kid="kid-001-0123456789abcdef",
             )
             store.create_order_with_authz(
                 account_id=acct.id,
@@ -373,5 +373,5 @@ class TestStoreCounting:
             conn.execute("UPDATE orders SET created_at = ?", (now_str,))
 
         within = now + timedelta(seconds=30)
-        assert store.count_recent_orders_by_kid("kid-001", 3600, now=within) == 3
-        assert store.count_recent_orders_by_kid("kid-002", 3600, now=within) == 0
+        assert store.count_recent_orders_by_kid("kid-001-0123456789abcdef", 3600, now=within) == 3
+        assert store.count_recent_orders_by_kid("kid-002-0123456789abcdef", 3600, now=within) == 0

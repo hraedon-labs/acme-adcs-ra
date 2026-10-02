@@ -239,7 +239,7 @@ class TestChallengeReplayShortCircuit:
             account_key=rsa.generate_private_key(public_exponent=65537, key_size=2048),
         )
 
-        resp = acme.new_account("kid-001", _eab_mac_key(config, "kid-001"))
+        resp = acme.new_account("kid-001-0123456789abcdef", _eab_mac_key(config, "kid-001-0123456789abcdef"))
         assert resp.status_code == 201
         resp = acme.new_order(["srv01.WORK-DOMAIN.local"])
         assert resp.status_code == 201

@@ -381,7 +381,7 @@ def _revoked_cert(store: Any) -> Any:
 
     account = store.create_account(
         jwk=jwk_from_private_key(ec.generate_private_key(ec.SECP256R1())),
-        eab_kid="kid-1",
+        eab_kid="kid-1-0123456789abcdef",
     )
     order = store.create_order_with_authz(
         account_id=account.id,

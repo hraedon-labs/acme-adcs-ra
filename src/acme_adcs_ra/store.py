@@ -1718,6 +1718,19 @@ class Store:
             ).fetchall()
         return [self._order_from_row(row) for row in rows]
 
+    def eab_kids_with_accounts(self, kids: list[str]) -> set[str]:
+        """Return the subset of *kids* under which at least one account exists
+        (any status: a deactivated account still proves the kid was issued)."""
+        if not kids:
+            return set()
+        placeholders = ",".join("?" for _ in kids)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT eab_kid FROM accounts WHERE eab_kid IN ({placeholders})",
+                list(kids),
+            ).fetchall()
+        return {str(r[0]) for r in rows}
+
     def count_recent_orders_by_kid(
         self,
         eab_kid: str,

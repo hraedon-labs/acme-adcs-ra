@@ -61,7 +61,7 @@ from acme_adcs_ra.store import Store
 
 from .hand_rolled_acme_client import HandRolledAcmeClient
 
-_KID = "kid-001"
+_KID = "kid-001-0123456789abcdef"
 _MAC_B64 = "c3VwZXItc2VjcmV0LWtleS0zMi1ieXRlcy1sb25nISE"
 _ADMIN = "test-admin-token-0123456789abcdef-32+"
 _CONFIRM = "test-confirm-token-0123456789abcdef-32+"
