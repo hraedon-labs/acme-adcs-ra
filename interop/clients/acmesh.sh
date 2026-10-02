@@ -1,5 +1,7 @@
 #!/bin/sh
-# ENDPOINTS: directory new-nonce-head new-acct acct-post new-order order-post-as-get authz challenge finalize cert revoke-cert key-change
+# ENDPOINTS: directory new-nonce-head new-acct acct-post new-order authz challenge finalize cert revoke-cert key-change
+# (no order-post-as-get: this RA's finalize returns the order already valid,
+#  so acme.sh never polls it)
 CLIENT=acme.sh
 . /harness/clients/lib.sh
 mkdir -p /w/webroot

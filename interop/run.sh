@@ -32,7 +32,7 @@ expected_steps() {
 }
 
 declared_endpoints() {
-    sed -nE 's/^# ENDPOINTS:[[:space:]]*(.*)$/\1/p' "$1" | tr ' ' '\n' | sed '/^$/d'
+    sed -nE 's/^# ENDPOINTS:[[:space:]]*(.*)$/\1/p' "$1" | tr '[:space:]' '\n' | sed '/^$/d'
 }
 
 check_badnonce_window() {
@@ -79,10 +79,14 @@ check_badnonce_window() {
             next
         }
         $1 == "POST" {
-            path = value("path")
+            # The retry is the VERY NEXT POST from the client after the refused one,
+            # whatever its path; it must then match path and payload. Matching
+            # the first later same-path POST let an unrelated poll (POST-as-GET
+            # payloads are all identical) pose as the retry (DeepSeek, r4).
             for (i = 1; i <= injections; i++) {
-                if (after_seen[i] && !retry_seen[i] && inject_path[i] == path) {
+                if (after_seen[i] && !retry_seen[i]) {
                     retry_seen[i] = 1
+                    retry_path[i] = value("path")
                     retry_nonce[i] = value("nonce")
                     retry_payload[i] = value("payload")
                     retry_status[i] = response_status()
@@ -106,9 +110,11 @@ check_badnonce_window() {
                     after_type[i] != "urn:ietf:params:acme:error:badNonce")
                     add_reason(i, "genuine-status=" after_status[i] " type=" after_type[i] " expected=400/badNonce")
                 if (!retry_seen[i]) {
-                    add_reason(i, "missing next same-path POST retry")
+                    add_reason(i, "no POST followed the refused request (no retry)")
                     continue
                 }
+                if (retry_path[i] != inject_path[i])
+                    add_reason(i, "next POST was to " retry_path[i] ", not a retry of " inject_path[i])
                 if (retry_payload[i] != inject_payload[i])
                     add_reason(i, "retry payload differs")
                 if (retry_nonce[i] == inject_nonce[i] || retry_nonce[i] == "")

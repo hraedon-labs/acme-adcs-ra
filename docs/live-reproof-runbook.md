@@ -142,6 +142,13 @@ random per run and bound to a fake CA, so the logs are safe to share, but they
 are not secret-free. CI
 runs it on every PR (`.github/workflows/interop.yml`).
 
+Known limits of the badNonce proof: with `INJECT_BAD_NONCE_EVERY=1` an
+injection can land on a request the scenario expects to be refused (acme.sh's
+post-deactivation order), whose retry is then a deliberate 401, so that knob
+does not pass the full suite; the default (3) and CI are unaffected. A
+`docker run` failure that exits 1 (e.g. daemon unreachable) is
+indistinguishable from a client exiting 1 and is reported as a client FAIL.
+
 Coverage gaps, stated rather than implied: certbot has no keyChange; the lego
 CLI has no account deactivation; after deactivation certbot (which deleted its
 local account and would try a fresh registration) and Posh-ACME (which refuses
