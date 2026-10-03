@@ -503,6 +503,11 @@ def _vet_redirect(
     return target, ""
 
 
+# Windows' default timer resolution is ~15.6ms; three ticks covers a socket
+# timeout that the OS fires early relative to time.monotonic. See _past_deadline.
+_DEADLINE_CLOCK_SLACK_SECONDS = 0.05
+
+
 class _LiveTransfer:
     """The response the deadline watchdog should tear down, if one exists yet.
 
@@ -530,14 +535,23 @@ def _past_deadline(timed_out: threading.Event, deadline: float) -> bool:
       the flag exists to prevent, and which made the reason nondeterministic
       between platforms. Linux happened to lose the race the other way.
 
-    The clock comparison is exact rather than approximate, and does not need a
-    tolerance: the clamped timeout is ``deadline - t0`` for some ``t0`` taken
-    before the read begins at ``t1 >= t0``, so it cannot expire before
-    ``t1 + (deadline - t0) >= deadline``. When the clamp is *not* what bound the
-    read (``timeout_seconds`` was the smaller of the two), expiry says nothing
-    about the deadline and the real transport error is reported instead.
+    In exact arithmetic the clamped timeout ``deadline - t0`` (``t0`` taken
+    before the read begins at ``t1 >= t0``) cannot expire before
+    ``t1 + (deadline - t0) >= deadline``. The socket timer and
+    ``time.monotonic`` are different clocks, though, and on Windows the timer
+    can fire a tick early: the 2026-10-03 scheduled run saw a read timeout of
+    0.198s land just short of the deadline, so the comparison came out False
+    and the deadline was reported as "CRL fetch failed". Hence
+    ``_DEADLINE_CLOCK_SLACK_SECONDS``, a few Windows timer ticks. When
+    ``timeout_seconds`` rather than the clamp bound the read, expiry that far
+    from the deadline still reports the real transport error. An error within
+    the slack window is reported as the deadline with the transport error
+    attached, so either way nothing is lost.
     """
-    return timed_out.is_set() or time.monotonic() >= deadline
+    return (
+        timed_out.is_set()
+        or time.monotonic() >= deadline - _DEADLINE_CLOCK_SLACK_SECONDS
+    )
 
 
 def _abort_live(live: _LiveTransfer, timed_out: threading.Event) -> None:

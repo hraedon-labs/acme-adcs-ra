@@ -277,6 +277,30 @@ class TestRedirectHeadersCountAgainstTheDeadline:
         assert elapsed < 1.6
 
 
+class TestDeadlineClassificationToleratesTimerGranularity:
+    def test_a_clamped_timeout_firing_a_tick_early_still_reads_as_the_deadline(
+        self,
+    ) -> None:
+        """Windows CI, 2026-10-03: the clamped socket timeout fired just before
+        `time.monotonic()` reached the deadline, so an exact comparison reported
+        a generic fetch failure instead of the deadline."""
+        import threading
+        import time
+
+        from acme_adcs_ra.crl_evidence import _past_deadline
+
+        timed_out = threading.Event()
+        assert _past_deadline(timed_out, time.monotonic() + 0.01) is True
+
+    def test_an_error_well_before_the_deadline_is_not_the_deadline(self) -> None:
+        import threading
+        import time
+
+        from acme_adcs_ra.crl_evidence import _past_deadline
+
+        timed_out = threading.Event()
+        assert _past_deadline(timed_out, time.monotonic() + 5.0) is False
+
 # ---------------------------------------------------------------------------
 # Finding 2 (medium) — reconciliation could falsely PASS
 # ---------------------------------------------------------------------------
