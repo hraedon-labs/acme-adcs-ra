@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### CRL deadline classification tolerates Windows timer granularity (2026-10-03)
+
+- A CRL retrieval stopped by its total deadline could be reported as a generic
+  `CRL fetch failed` on Windows: the per-hop socket timeout, clamped to the time
+  remaining, fired a timer tick before `time.monotonic()` reached the deadline,
+  and the exact comparison in `_past_deadline` missed it. The comparison now
+  allows `_DEADLINE_CLOCK_SLACK_SECONDS` (50ms). Found by the scheduled Windows
+  CI run; pinned by a deterministic test that fails without the slack.
+
 ### RFC 8555 error mappings, media type, EAB kid floor, challenge Link (2026-10-01)
 
 - **Finalize on a not-ready order is 403 `orderNotReady`** (§7.4, WI-043), not
