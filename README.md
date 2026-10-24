@@ -36,7 +36,7 @@ and wants ACME-style automation against it.
 >   on the exact commit. Use the v1.12.0 tag if you want the released,
 >   live-proven artifact.
 > - The project is feature-complete for its charter and maintained
->   deliberately rather than continuously. The upstream project accepts security
+>   deliberately rather than passively. The upstream project accepts security
 >   and bug reports with no response-time commitment. If you run your own copy,
 >   see [`docs/handover.md`](docs/handover.md).
 

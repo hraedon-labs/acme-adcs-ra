@@ -4,7 +4,7 @@ Start here if you have inherited a running acme-adcs-ra, or are about to deploy
 one, and the person who built it is not around to ask.
 
 This page describes the project as of **2026-10-24**: latest release **v1.12.0**
-(tagged 2026-08-24), with `main` 114 commits ahead of that tag.
+(tagged 2026-08-24), with `main` well over a hundred commits ahead of that tag (`git rev-list --count v1.12.0..main`).
 
 ## Read this first: what is and is not proven
 

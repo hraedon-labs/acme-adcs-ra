@@ -28,7 +28,7 @@ Use `<your-domain>`-style values of your own. The defaults named `CA01`,
 
 | Setting | Default | What it does |
 |---|---|---|
-| `eab_allowlist` | empty | JSON list of `{"kid": ..., "mac_key": ...}`. Only these EAB credentials can create accounts. The MAC key must decode to at least 32 bytes. Kids must be unique and at least 22 characters (see `allow_weak_credentials`). Mint entries with `python scripts/eab.py`. |
+| `eab_allowlist` | empty | JSON list of `{"kid": ..., "mac_key": ...}`. Only these EAB credentials can create accounts. The MAC key must decode to at least 32 bytes. Kids must be unique and at least 22 characters (see `allow_weak_credentials`); a shorter kid that already has accounts is grandfathered with a startup warning. Mint entries with `python scripts/eab.py`. |
 | `san_scopes` | empty | Per kid, the DNS names that kid may request: `dns_patterns`, exact names or leftmost-label wildcards such as `*.example.com`. A wildcard matches one label only (`*.example.com` matches `a.example.com`, not `a.b.example.com`). This is the whole authorization surface. |
 | `max_accounts_per_eab_kid` | 1 | Lifetime cap on accounts per kid. Deactivated accounts still count. |
 | `admin_token` | empty | Bearer token for the maintenance endpoints. At least 32 characters. Treat like a password. |
@@ -39,7 +39,7 @@ Use `<your-domain>`-style values of your own. The defaults named `CA01`,
 
 | Setting | Default | What it does |
 |---|---|---|
-| `base_url` | `http://localhost:8000` | The public origin of the RA. **Security configuration, not a display value**: every signed request and EAB binding is checked against it. It must be a bare origin (scheme, host, optional port), with no path, query or fragment. Anything other than loopback must be `https`. |
+| `base_url` | `http://localhost:8000` | The public origin of the RA. **Security configuration, not a display value**: every signed request and EAB binding is checked against it. It must be a bare origin (scheme, host, optional port), with no path, query or fragment. Use `https` for anything other than loopback: a plain `http` origin off loopback is **not** refused, the RA starts and logs a warning, and then serves over plaintext. |
 | `terms_of_service` | empty | Terms-of-service URL published in the directory. |
 | `bind_host`, `bind_port` | empty | Where the process listens. Under IIS the proxy supplies the port (`HTTP_PLATFORM_PORT`) and `web.config` sets the host to `127.0.0.1`. |
 | `trust_proxy` | false | Trust forwarded headers from the reverse proxy. Set true behind IIS. |
@@ -121,7 +121,8 @@ revocation".
 
 The RA stops with a message instead of running in a weaker state when:
 
-- `base_url` has a path, a query, no host, or is plain `http` off loopback;
+- `base_url` has a path, a query or no host (plain `http` off loopback only logs a
+  warning; see the `base_url` row above);
 - the EAB list has duplicate or empty kids, a MAC key under 32 bytes, or a kid
   under 22 characters that has no existing accounts;
 - `admin_token` or `revocation_confirm_token` is under 32 characters, or the two

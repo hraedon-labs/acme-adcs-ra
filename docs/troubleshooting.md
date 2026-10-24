@@ -26,7 +26,8 @@ Read the stdout log. The RA refuses to start, with a message, on configuration
 that would weaken it. The list is in `configuration.md`, "Startup refusals worth
 knowing". The usual ones:
 
-- `ACME_RA_BASE_URL` has a path, or is `http` off loopback.
+- `ACME_RA_BASE_URL` has a path, a query or no host. (Plain `http` off loopback
+  does not stop startup; it logs a warning.)
 - A weak or short credential: EAB MAC key under 32 bytes, kid under 22
   characters, admin or confirm token under 32 characters, or both tokens equal.
 - `ACME_RA_AUDIT_OFFBOX_REQUIRED=true` but the sink cannot actually emit
