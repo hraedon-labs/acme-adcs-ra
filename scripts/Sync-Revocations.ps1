@@ -32,7 +32,7 @@
       - Single-identity (opt-in, -LocalMode): the agent runs on the RA host
         under the enrollment gMSA, which is also the revoker. The enrollment
         gMSA must be granted template-scoped OfficerRights on the CA (see
-        docs/operations.md ## Single-identity deployment). This is a weaker
+        docs/operations.md, "Deployment variant: single-identity"). This is a weaker
         posture (one credential compromise grants both issue and revoke --
         see threat-model section E) but operationally simpler. The invocation
         mechanism is unchanged; -LocalMode signals deployment intent and
@@ -124,7 +124,7 @@
     Single-identity deployment: the agent runs on the RA host under the
     enrollment gMSA (which is also the revoker). The enrollment gMSA must
     have template-scoped OfficerRights on the CA (see docs/operations.md
-    ## Single-identity deployment). The requester check passes trivially
+    "Deployment variant: single-identity"). The requester check passes trivially
     since the revoker IS the enrollment gMSA. This flag adjusts the mode
     banner and output; the invocation mechanism is unchanged.
 
@@ -177,7 +177,7 @@
 
     For single-identity deployments, pass -LocalMode and schedule the task
     on the RA host under the enrollment gMSA (which is also the revoker).
-    See docs/operations.md ## Single-identity deployment and threat-model
+    See docs/operations.md, "Deployment variant: single-identity" and threat-model
     section E for the explicit trade-off. The invocation mechanism is the same
     either way; -LocalMode signals the deployment topology.
 #>

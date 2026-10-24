@@ -38,7 +38,7 @@ report through GitHub
 Private vulnerability reporting is enabled on that upstream repository.
 
 Include the affected version, a reproduction, and the expected and actual
-behavior. The upstream project is stable and passively maintained. Reports are
+behavior. The upstream project is feature-complete and maintained deliberately rather than passively. Reports are
 read and acknowledged on a best-effort basis, with no committed response time.
 
 If you run a copy of this repository inside your own organisation, that link
