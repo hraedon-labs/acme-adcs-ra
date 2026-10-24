@@ -102,7 +102,7 @@
     single-identity deployment (agent on the RA host under the enrollment
     gMSA, which is also the revoker). Only meaningful with
     -RegisterRevocationSync. See Sync-Revocations.ps1 .PARAMETER LocalMode
-    and docs/operations.md ## Single-identity deployment.
+    and docs/operations.md, "Deployment variant: single-identity".
 
 .PARAMETER DryRun
     Register the revocation-sync task in report-only mode: the task action

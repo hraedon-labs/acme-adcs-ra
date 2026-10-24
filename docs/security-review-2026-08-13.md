@@ -337,7 +337,7 @@ live re-proof covers it.
    it and warns when it is missing.
 2. **Weak credentials now refuse startup.** Any EAB MAC key under 32 bytes or
    admin token under 32 characters must be regenerated
-   (`python scripts/eab.py new`) or explicitly waived with
+   (`python scripts/eab.py`) or explicitly waived with
    `allow_weak_credentials` in a lab.
 3. **`Sync-Revocations.ps1` and `Register-MaintenanceTasks.ps1` reject
    non-https RA URLs.** A loopback-http lab needs `-AllowInsecureUrl`.

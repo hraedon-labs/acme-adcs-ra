@@ -46,6 +46,6 @@ def assert_eab_kids_meet_floor(config: RAConfig, store: Store) -> None:
             "weak credentials rejected at startup: EAB kid(s) "
             + ", ".join(f"{k!r} ({len(k)} chars)" for k in refused)
             + f" are below the {MIN_EAB_KID_CHARS}-character floor and have no "
-            "existing accounts. Mint kids with `python scripts/eab.py new`. Set "
+            "existing accounts. Mint kids with `python scripts/eab.py`. Set "
             "allow_weak_credentials=true ONLY for a lab or CI fixture."
         )

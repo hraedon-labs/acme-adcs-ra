@@ -417,7 +417,7 @@ re-enroll — so the token is a high-value secret, treated like an EAB MAC key.
 Since v1.10.0 (the 1.9 line was never released) the RA **refuses to start** on a weak credential: EAB MAC keys
 must decode to at least 32 bytes and `ACME_RA_ADMIN_TOKEN` /
 `ACME_RA_REVOCATION_CONFIRM_TOKEN` must be at least 32 characters. Everything
-`python scripts/eab.py new` generates clears this. `allow_weak_credentials=true`
+`python scripts/eab.py` generates clears this. `allow_weak_credentials=true`
 waives it and exists for lab and CI fixtures only — never set it in production.
 
 The floor also closes a sharper hole: an EAB entry whose `mac_key` decoded to

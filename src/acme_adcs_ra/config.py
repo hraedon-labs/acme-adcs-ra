@@ -545,7 +545,7 @@ class RAConfig(BaseSettings):
                 problems.append(
                     f"EAB mac_key for kid {kid!r} decodes to {len(key_bytes)} bytes; "
                     f"at least {MIN_EAB_MAC_KEY_BYTES} are required "
-                    f"(generate one with `python scripts/eab.py new`)"
+                    f"(generate one with `python scripts/eab.py`)"
                 )
 
         admin_token = self.admin_token.get_secret_value()
