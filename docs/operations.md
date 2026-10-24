@@ -1697,6 +1697,11 @@ upgrade as usual (below).
 1. Snapshot the SQLite DB (e.g. `sqlite3 acme_ra.db ".backup acme_ra.db.bak"`
    or a file-system snapshot). The DB is in WAL mode; a raw file copy while
    the RA is running may be torn — use the `.backup` command or stop the RA.
+   If the `sqlite3` command-line tool is not installed on the host, the RA's own
+   Python does the same online backup:
+   `python -c "import sqlite3; s=sqlite3.connect('acme_ra.db'); d=sqlite3.connect('acme_ra.db.bak'); s.backup(d); d.close(); s.close()"`
+   (run it with the runtime's venv `python.exe`, as an identity that can read
+   the database).
 2. Copy `acme-ra.env` to the encrypted backup (it is already ACL'd; ensure
    the backup target is too).
 3. Copy the SIEM JSONL sink (or confirm the SIEM has ingested up to the

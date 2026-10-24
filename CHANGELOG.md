@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Documentation for adoption by a second organisation (2026-10-24)
+
+- Documentation only; no code, script or configuration change.
+- New: `docs/handover.md` (start here when taking over a running install),
+  `docs/configuration.md` (every setting, derived from `config.py`),
+  `docs/upgrade-and-rollback.md`, `docs/troubleshooting.md`, and
+  `CONTRIBUTING.md`. The dated engineering status log that was the `## Status`
+  section of `AGENTS.md` moved unchanged to `docs/status-log-2026.md`.
+- Rewritten in plain language: `README.md`, `AGENTS.md`, `SECURITY.md`. The
+  README Status section now states the live re-proof position directly: v1.12.0
+  is the latest release and the live re-proof of current `main` is outstanding.
+- Corrected stale statements: the README named a nonexistent
+  `scripts/eab.py new` subcommand; `deploy/iis/README.md` said `-InstallPrereqs`
+  installs Python through `winget` (it never does); the README described only
+  the CRL watermark as unreleased although `main` carries more.
+
 ### CRL deadline classification tolerates Windows timer granularity (2026-10-03)
 
 - A CRL retrieval stopped by its total deadline could be reported as a generic
