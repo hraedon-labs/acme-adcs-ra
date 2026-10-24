@@ -1,10 +1,10 @@
 # Live re-proof runbook (WI-038)
 
 **Why this exists.** Cloud CI **cannot reach an ADCS CA**, so a green CI run does
-**not** confirm that the enrollment and revocation legs still work — those depend
+**not** confirm that the enrollment and revocation legs still work. Those depend
 on a real CA, a domain-joined RA host, and a passwordless gMSA. This runbook is
-the repeatable procedure for proving the ADCS integration end-to-end, plus the
-cadence at which it must be run so "proven" does not decay silently.
+the repeatable procedure for proving the ADCS integration end to end, plus the
+cadence at which to run it so "proven" does not decay silently.
 
 > **Green CI ≠ ADCS-verified.** CI (lint + type + Python unit + Pester
 > pure-logic + identifier-gate + pip-audit) proves the code and the operator
@@ -46,16 +46,16 @@ Record each run in the validation log in
    the CSR, requester = the enrollment gMSA in the CA DB.
    **Also confirm the chain check did not false-reject** (2026-08-11): the RA now
    requires a certificate in `certnew.p7b` to both match the leaf's issuer *and*
-   verify its signature. A successful issuance is the proof — a validator that is
-   subtly wrong breaks *every* issuance, and no unit test can show that because
+   verify its signature. A successful issuance is the proof. A validator that is
+   subtly wrong breaks *every* issuance, and no unit test can show that, because
    only the real CA produces the real chain.
 3. Provoke a policy denial (out-of-scope SAN) → rejected at finalize.
 4. Confirm reason-7 revocation is rejected (`badRevocationReason`).
 
 ### A.1 ACME front controls (added 2026-08-11)
 
-These are cheap (no CA involvement) and belong in every run — they are the
-controls a *deployment* mistake silently disables, which unit tests cannot see.
+These are cheap (no CA involvement) and belong in every run. A *deployment*
+mistake silently disables them, and unit tests cannot see that.
 
 1. **URL binding pins to `base_url`, not the request.** With the site binding
    left catch-all (the installer default), send a `newAccount` whose JWS `url`
@@ -65,7 +65,7 @@ controls a *deployment* mistake silently disables, which unit tests cannot see.
    `badExternalAccountBinding`. Then a `kid` naming another deployment →
    **rejected**, `not an account URL on this server`.
    *Why here:* a proxy or binding change can make `request.url` and `base_url`
-   disagree; this is where that shows up.
+   disagree, and this is where that shows up.
 2. **Account eviction — with the control first.** Rename the allowlisted kid in
    the dotenv, recycle the pool, then:
    - **control:** a *new* account under the renamed kid must **succeed** (201).
@@ -87,8 +87,8 @@ controls a *deployment* mistake silently disables, which unit tests cannot see.
 ### A.2 Independent-client compatibility record
 
 Repeat this on each candidate artifact as part of the full run. The in-repo
-client is useful for controlled checks, but cannot establish compatibility
-with an independent implementation.
+client is useful for controlled checks but cannot establish compatibility with
+an independent implementation.
 
 1. Record the RA commit, client version, and ACME library version when exposed
    by the client. Use a fresh, scoped test account and record the effective
@@ -185,15 +185,15 @@ idempotent 200 (WI-047).
 ### A.3 The phase-L blackhole, and proving the instrument first
 
 The queue/drain phases need the CA's inbound TCP/443 blocked from the RA so
-enrollments hang on connect. Two things about that mechanism are load-bearing
-and have each silently voided a round:
+enrollments hang on connect. Two things about that mechanism are load-bearing,
+and each has silently voided a round:
 
 1. **Scope the rule to every address the RA can source from, in both families.**
    A v4-only scope lets enrollments ride IPv6 straight through it.
 2. **Quote the addresses when you build the PowerShell array literal, and check
    the exit code.** Unquoted, an IPv6 literal is not a valid PowerShell
-   expression: the wrapper dies with `Missing expression after ','`, creates no
-   rule, and — if the caller does not check the exit code — reports success. The
+   expression. The wrapper dies with `Missing expression after ','`, creates no
+   rule, and, if the caller does not check the exit code, reports success. The
    harness driver did exactly this until 2026-09-05.
 
 ```bash
@@ -206,9 +206,9 @@ ssh "$CA" 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\blk.ps1' 
 ```
 
 **Then prove the drop from the RA before measuring anything.** `reachprobe.ps1`
-must report `dropped` — not `refused`, which means something is answering with
-RST and nothing will queue — for **every** address, and the driver must exit
-rather than proceed on any other result. That gate is the only reason the
+must report `dropped` for **every** address, and the driver must exit rather than
+proceed on any other result. `refused` is not good enough: it means something is
+answering with RST and nothing will queue. That gate is the only reason the
 2026-09-05 run did not take a measurement on top of a blackhole that was never
 installed.
 
@@ -267,16 +267,17 @@ next scheduled publication — on a one-week `CRLPeriod`, for close to a week.
 That is not lab housekeeping. A certificate the CA considers revoked but that
 nobody can see as revoked is the gap this product's revocation evidence exists
 to make visible (the least-privilege path accepts it only until the next
-scheduled publication, and records it), and leaving the lab in it also means the
-*next* session's `require_crl_evidence` checks and the watermark's first-use
-baseline run against a CRL silently missing the previous session's revocations —
-which leaves cross-session revocation latency measurable only from CA timestamps
-and the external sampler, not from the RA's own evidence.
+scheduled publication, and records it). Leaving the lab in that state also means
+the *next* session's `require_crl_evidence` checks and the watermark's first-use
+baseline run against a CRL silently missing the previous session's revocations.
+Cross-session revocation latency is then measurable only from CA timestamps and
+the external sampler, not from the RA's own evidence.
 
 It went unnoticed for rounds because the validation log asserted it. Entries for
-earlier rounds say "revoked … and the CRL republished"; at least one round did
-not. Same shape as the preserve step before it: the step was believed done
-because the sentence describing it was written, and nothing checked. So:
+earlier rounds say "revoked … and the CRL republished", and at least one round
+did not do it. This has the same shape as the preserve step below: the step was
+believed done because the sentence describing it was written, and nothing
+checked. So:
 
 1. run `certutil -config <CA> -CRL` after the revocation loop;
 2. **verify from the CDP, not from `certutil`'s exit code.**
@@ -314,10 +315,10 @@ because the sentence describing it was written, and nothing checked. So:
 **Interaction with the sampler, so a future session does not get this backwards.**
 A forced republication truncates the current publication cycle, which costs
 `scripts/sample_crl_age.py` that cycle as a clean natural observation. It
-**cannot** corrupt the served-age floor — every age a truncated cycle serves is
-a genuine served age, so it can never push the observed maximum above the true
-one; it can only fail to reach it. The trade is real
-and one-sided: do not skip the republish to protect the sampler.
+**cannot** corrupt the served-age floor: every age a truncated cycle serves is a
+genuine served age, so it can never push the observed maximum above the true
+one; it can only fail to reach it. The trade is real and one-sided. Do not skip
+the republish to protect the sampler.
 
 **Preserve the post-run store BEFORE restoring it.** Copy the live store — all
 three SQLite files, and only after the app pool is confirmed *stopped* — to a
@@ -326,12 +327,12 @@ copy cannot be made rather than proceeding. Do it before removing anything, so a
 failure costs a re-run and not the evidence.
 
 This is not housekeeping. WI-052 went four rounds unresolved while the data that
-would have settled it was generated by every session and deleted by this step:
-the store carried `crl_this_update` on every CRL-verified confirmation, and 722
+would have settled it was generated by every session and deleted by this step.
+The store carried `crl_this_update` on every CRL-verified confirmation, and 722
 audit rows spanning two months contained not one of them. The item was not
-un-measured, it was **un-measurable** — and the same is true of *any* property
+un-measured, it was **un-measurable**, and the same is true of *any* property
 that needs evidence from more than one session. A restore-to-pristine teardown
-is correct for isolation and is amnesia for measurement; keeping one dated copy
+is correct for isolation and is amnesia for measurement. Keeping one dated copy
 per session costs almost nothing and is what makes the class measurable at all.
 
 Anything you intend to measure *across* sessions must live outside the restore
