@@ -1,11 +1,15 @@
 # Hosting acme-adcs-ra on IIS (HttpPlatformHandler, app pool as a gMSA)
 
-This mirrors cert-watch's Windows deployment (`../../../cert-watch/deploy/iis/`)
-— same FastAPI/uvicorn-behind-IIS model on the same VM — with **one decisive
+This follows the same model as the cert-watch Windows deployment (a
+FastAPI/uvicorn process behind IIS on the same VM), with **one decisive
 difference**: the IIS application pool runs **as the gMSA**, so the uvicorn
 worker's ambient Kerberos identity is what authenticates to `/certsrv/`
 (Negotiate/SSPI, passwordless). That is the whole reason this works without a
 stored ADCS credential.
+
+Start from the top-level README ("Installation") and
+[`docs/operator-requirements.md`](../../docs/operator-requirements.md). This
+page is the IIS detail.
 
 ## Prerequisites
 
@@ -15,13 +19,18 @@ stored ADCS credential.
   feature and not auto-downloaded (its download has been unreliable, and this is
   issuance-path infra) — install the v1.2 amd64 MSI by hand or pass
   `-HttpPlatformHandlerMsi <path>` to the installer.
-- **Python 3.12+** on the host (the Windows-only `pyspnego` dep — used by the
-  in-tree `negotiate_auth` for channel-bound Negotiate — must have a wheel for
-  this Python; it ships abi3 wheels. This dep is the one part Linux CI never
-  exercises). `-InstallPrereqs` installs Python via `winget` if missing.
+- **Python 3.12+** on the host, installed machine-wide **before** you run the
+  installer. The Windows-only `pyspnego` dependency (used by the in-tree
+  `negotiate_auth` for channel-bound Negotiate) must have a wheel for this
+  Python; it ships abi3 wheels. This dependency is the one part Linux CI never
+  exercises. `-InstallPrereqs` does **not** install Python (it deliberately
+  never runs a PATH-selected `py`, `python` or `winget`). If Python is missing,
+  the installer stops and tells you to install it.
 - **The gMSA installed on this host**: `Install-ADServiceAccount` →
-  `Test-ADServiceAccount` returns `True`. (See the project memory on the AES
-  Kerberos-etype + group-membership gotchas if that fails.)
+  `Test-ADServiceAccount` returns `True`. If that fails, check that the gMSA was
+  created with AES Kerberos encryption types (`-KerberosEncryptionType
+  AES128,AES256`) and that this host is in the group allowed to retrieve its
+  password.
 
 The installer prints a **prerequisite check** (IIS role, IIS module, Python,
 RSAT) up front on every run, so you can see what is missing before it acts.
