@@ -1,22 +1,21 @@
 # Operator requirements
 
-This RA delegates a lot to whoever installs it. That is deliberate — the
-installer refuses to guess about anything that decides what certificates get
-issued — but it only works if the delegation is written down. This document is
-the contract: what you must provide, what the installer will refuse to do and
-why, and exactly what to do when it refuses.
+This RA leaves a lot to whoever installs it. That is deliberate: the installer
+refuses to guess about anything that decides what certificates get issued. It
+only works if the delegation is written down. This document is the contract. It
+covers what you must provide, what the installer refuses to do and why, and what
+to do when it refuses.
 
-If you are looking for day-two operations (retention, revocation, the admin
-token, backup/restore), that is `operations.md`. If you are looking for the
-pre-pilot sign-off list, that is `pre-pilot-checklist.md`. This file is about
-getting a correct install and keeping its invariants true.
+For day-two operations (retention, revocation, the admin token, backup/restore)
+see `operations.md`. For the pre-pilot sign-off list see
+`pre-pilot-checklist.md`. This file is about getting a correct install and
+keeping its invariants true.
 
 ---
 
 ## 1. The two-tree layout
 
-The install is split in two, and the split is a security boundary rather than
-tidiness.
+The install is split in two. The split is a security boundary, not tidiness.
 
 | | Code | State |
 |---|---|---|
@@ -35,16 +34,16 @@ data* with `CREATOR OWNER` inheritance. Any local user can therefore
 pre-create `C:\ProgramData\acme-adcs-ra` and own it. Four consecutive security
 review rounds produced findings that all began there: a planted interpreter, a
 planted venv startup file, a planted checksum manifest that authenticated the
-planted interpreter, junctions that redirected the elevated ACL fix-ups.
+planted interpreter, and junctions that redirected the elevated ACL fix-ups.
 
 `%ProgramFiles%` grants `Users` read and execute only. Moving the executable
 half of the install there removes the attacker's ability to pre-plant it at
 all, rather than detecting the plant afterwards.
 
-The second half of the split matters just as much: the gMSA needs write access
+The second half of the split matters just as much. The gMSA needs write access
 to the database and the log, and it used to get that over a single tree that
-also held the interpreter it runs as. A compromised app pool could rewrite its
-own interpreter. Now it can write only to things that are never executed.
+also held the interpreter it runs as, so a compromised app pool could rewrite
+its own interpreter. Now it can write only to things that are never executed.
 
 ### Invariants you must not break
 
@@ -59,7 +58,7 @@ These are not style preferences. Each one is load-bearing:
    — including `%ProgramData%`, `C:\`, `%TEMP%`, or a user profile. If you
    override the default, pick somewhere with `%ProgramFiles%`-like permissions.
 4. **Never relax the dotenv's ACL.** `acme-ra.env` is gMSA **read-only** on
-   purpose: it holds `ACME_RA_EAB_ALLOWLIST` and `ACME_RA_SAN_SCOPES`, which
+   purpose. It holds `ACME_RA_EAB_ALLOWLIST` and `ACME_RA_SAN_SCOPES`, which
    decide which clients may enrol and for which names. A worker that can
    rewrite its own SAN scope has no SAN scope.
 5. **Never hand-edit the ACLs on either tree.** The next install re-verifies
@@ -90,35 +89,39 @@ installer never runs PATH-selected `py`, `python`, or `winget`.
 ### Local-only audit: a supported posture with a stated cost
 
 `audit_offbox_required` is **off by default**, and running without an off-box
-sink is supported rather than merely tolerated. The cost is explicit, and it is
+sink is supported, not merely tolerated. The cost is explicit, and it is
 availability rather than confidentiality:
 
 - **A full disk stops issuance.** Auditing every issuance is a hard rule of this
   project, enforced by committing the audit row in the same transaction as the
   certificate. When that transaction cannot commit, issuance fails. This is the
-  intended failure direction — the alternative is issuing certificates with no
-  record — but it makes audit-store capacity an issuance dependency.
+  intended failure direction (the alternative is issuing certificates with no
+  record), but it makes audit-store capacity an issuance dependency.
 - **The retention sweep will not run.** With no off-box copy, the local
   `audit_log` is the only evidence there is, so this RA refuses to delete from
   it regardless of `audit_retention_days` or `audit_prune_enabled`. Local-only
   deployments bound growth by *capacity and monitoring*, not by pruning.
 
-What you get instead is measurement: the footprint (SQLite database plus the
+What you get instead is measurement. The footprint (SQLite database plus the
 JSONL mirror and its rotated files) is reported at startup and warns past
 `audit_store_warn_mib` (default 1024). Growth is slow — a few GiB per 180 days
 even under sustained denial flooding, because denial rows are coalesced per
 time window rather than per request — so crossing the threshold means something
 has changed rather than that the RA is busy.
 
-To enable pruning you need **all** of: `audit_retention_days` at or above the
-floor, `audit_prune_enabled`, `audit_offbox_required`, and a delivery probe that
-succeeds at sweep time.
+Pruning is not available in production. The design would need **all** of
+`audit_retention_days` at or above the floor, `audit_prune_enabled`,
+`audit_offbox_required`, and a delivery probe that succeeds at sweep time. But
+startup refuses `audit_prune_enabled=true`, because the current SIEM path has no
+acknowledged per-row delivery (`config.py`, `server.py`). `audit_retention_days`
+alone declares the policy, is checked against the retention floor at startup,
+and deletes nothing.
 
 ### A note on the Python you provide
 
 A **machine-wide** interpreter (`%ProgramFiles%\Python3xx`, or the `py`
-launcher pointing at one) is referenced in place — it already lives somewhere
-non-administrators cannot write. A **user-profile** interpreter
+launcher pointing at one) is referenced in place, because it already lives
+somewhere non-administrators cannot write. A **user-profile** interpreter
 (`%LOCALAPPDATA%`, Windows Store) is copied into the runtime tree, because the
 gMSA cannot read another account's profile. Prefer a machine-wide install:
 fewer bytes to copy, and one less thing that can drift.
@@ -140,7 +143,7 @@ refusal, even if the familiar broad `Users` groups are absent.
 
 The installer fails closed. Each refusal below is deliberate, and each one has
 a specific remedy. **Do not work around these by pre-creating directories,
-loosening ACLs, or editing the script** — every one of them exists because the
+loosening ACLs, or editing the script.** Every one of them exists because the
 permissive version of it was a finding.
 
 ### 3.1 "Refusing to install into `<path>`" — a root that is not ours
@@ -171,14 +174,14 @@ files are worth keeping. In order:
 **When:** ownership of an existing tree could not be taken using
 `icacls /setowner`, which never follows a junction or symlink.
 
-**Why:** `takeown` would have forced it, but `takeown` has no no-follow option
-— a junction raced into the tree mid-operation redirects an elevated recursive
+**Why:** `takeown` would have forced it, but `takeown` has no no-follow option.
+A junction raced into the tree mid-operation redirects an elevated recursive
 ownership rewrite *outside* the install directory. The installer no longer has
 a force path.
 
 **What to do:** treat the directory as hostile. Inspect, move or delete it,
 re-run. If this happens on a directory you are certain is yours, something
-else on the host has taken ownership of it — find out what before continuing.
+else on the host has taken ownership of it. Find out what before continuing.
 
 ### 3.3 "app pool `<name>` still has a live worker process after N s"
 
@@ -188,7 +191,7 @@ worker after the timeout.
 **Why:** Windows checks access when a handle is *opened*. A worker holding a
 write handle from before the ACL reset keeps that access through it, and could
 rewrite runtime bytes between verification and execution. "The pool says
-Stopped" is not evidence — the worker lingers while it drains.
+Stopped" is not evidence, because the worker lingers while it drains.
 
 **What to do:** stop the pool by hand (`appcmd stop apppool`), or kill the
 `w3wp.exe` for that pool, and re-run. If it will not die, something is holding
@@ -209,9 +212,9 @@ holding files, or a second install running concurrently.
 ### 3.5 Refusals on the prerequisite MSI
 
 `-HttpPlatformHandlerMsi` over plaintext `http://` is refused outright. Every
-source, local or HTTPS, requires `-HttpPlatformHandlerSha256`; TLS authenticates
-an origin, not an artifact. The input is copied/downloaded into a fresh
-administrator-only staging directory, and that staged file's digest,
+source, local or HTTPS, requires `-HttpPlatformHandlerSha256`, because TLS
+authenticates an origin, not an artifact. The input is copied/downloaded into a
+fresh administrator-only staging directory, and that staged file's digest,
 Authenticode signature, and publisher are checked before the absolute System32
 `msiexec.exe` path opens it. The source pathname is never the execution path.
 
@@ -219,10 +222,10 @@ Authenticode signature, and publisher are checked before the absolute System32
 
 The three install roots accept ordinary absolute local drive paths only. UNC,
 device/extended namespaces, ADS syntax, dot segments, reserved device names,
-and components ending in a period or space are refused rather than normalized.
-These spellings can alias one filesystem object and collapse the code/state ACL
-boundary. Existing ancestors are also resolved through the kernel for junction
-and 8.3 aliases.
+and components ending in a period or space are refused rather than normalized,
+because these spellings can alias one filesystem object and collapse the
+code/state ACL boundary. Existing ancestors are also resolved through the
+kernel for junction and 8.3 aliases.
 
 The installer source gate similarly refuses an unreadable/reparse input,
 untrusted owner, unresolved writer, or any write-class ACE for a principal
@@ -240,7 +243,7 @@ repository; copy the whole thing rather than regenerating them on the RA host.
 
 ## 4. Migrating an install that predates the code/state split
 
-Earlier versions put everything — interpreter, venv, database, logs, dotenv —
+Earlier versions put everything (interpreter, venv, database, logs, dotenv)
 under `C:\ProgramData\acme-adcs-ra`. The new installer will **refuse** that
 directory, because a tree from the old layout does not match the new shape.
 This is the "refuse and instruct" path from §3.1, and it is intentional: the
@@ -259,12 +262,12 @@ Migrate deliberately:
 7. Stop the app pool again, copy `acme_ra.db` and `acme-ra.env` into the new
    `-InstallDir`, and re-run the installer so the ACLs and the proof cover
    them.
-8. Update `web.config` if you had customised `processPath` — it now points at
+8. Update `web.config` if you had customised `processPath`. It now points at
    `<RuntimeDir>\current\venv\Scripts\python.exe`.
 9. Start the pool and verify per §5.
 
 The audit database carries the issuance and revocation trail. Do not start
-fresh unless you genuinely have no history worth keeping — the audit is the
+fresh unless you genuinely have no history worth keeping: the audit is the
 matching half of the revocation record.
 
 ---
@@ -305,7 +308,7 @@ Then finish the operator-owned configuration:
    attacker-driven growth but never deletes an audit row; pruning is yours.
 5. Set `ACME_RA_AUDIT_OFFBOX_REQUIRED=true` with authenticated HTTPS HEC for
    production. The default JSONL sink lives on the host an attacker is assumed
-   to control; plain syslog remains an optional mirror but cannot satisfy this
+   to control. Plain syslog remains an optional mirror but cannot satisfy this
    load-bearing requirement.
 
 ---

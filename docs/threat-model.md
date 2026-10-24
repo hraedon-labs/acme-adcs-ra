@@ -1,23 +1,23 @@
 # Threat Model — acme-adcs-ra
 
 **Status:** post-WI-1 (enrollment proven on the lab 2026-06-20); WI-015 live
-re-proof PASSED 2026-07-13 against the piloted commit. Living document —
-re-review on any change to the issuance path, the gMSA, the template scope, or
-the dependency set.
+re-proof PASSED 2026-07-13 against the piloted commit. Living document.
+Re-review it on any change to the issuance path, the gMSA, the template scope,
+or the dependency set.
 
 This is an ACME **Registration Authority** for ADCS. It mints real certificates
-and holds a standing enrollment identity. Worst case is *mis-issuance* or *leak
-of that identity* — not "wrong analysis." The read-only family conventions do
-not apply.
+and holds a standing enrollment identity. The worst case is *mis-issuance* or
+*leak of that identity*, not "wrong analysis." The read-only family conventions
+do not apply.
 
 > **✅ WI-1 CONFIRMED (2026-06-20) — the enrollment round-trip issues a real
 > cert on the lab CA. Revocation still has no `/certsrv/` endpoint (by design —
 > see below).**
 >
-> - **Enrollment (`CertsrvEnrollmentLeg`)** is **live-validated**: the deployed
+> - **Enrollment (`CertsrvEnrollmentLeg`)** is **live-validated.** The deployed
 >   RA (IIS app pool running as the gMSA) authenticates to `/certsrv/` over SPNEGO
 >   **with channel binding** (`negotiate_auth.NegotiateAuth` over `pyspnego`, so
->   it works against EPA=Require), POSTs the CSR to `certfnsh.asp`, and gets back
+>   it works against EPA=Require). It POSTs the CSR to `certfnsh.asp` and gets back
 >   a **serverAuth-only** cert (SAN from the CSR) issued off the existing CA and
 >   **chaining to the existing root**, with requester = `gMSA-acme-ra$`. The leg
 >   tolerates the CA's real response formats (`certnew.cer` returned as
@@ -31,20 +31,22 @@ not apply.
 >   draft was removed. The real mechanism is `certutil -revoke` or
 >   `ICertAdmin2::RevokeCertificate`, which requires **CA-officer ("Manage CA")
 >   rights**. To preserve least privilege the enrollment gMSA gains **no**
->   CA-officer rights; instead the RA's `revokeCert` records the revocation in
->   the RA store (cert → `revoked`, order → `revoked`, GET cert → 410 Gone) and
->   emits an honest audit event (`revocation_scope=ra-store-only`,
->   `ca_crl_updated=false`), and `scripts/Revoke-Cert.ps1` is the operator-run,
->   CA-officer credential that writes the CRL out-of-band. The server's
->   `revokeCert` endpoint remains wired to this leg via the `RevocationLeg`
->   protocol, so a future in-band mechanism (an explicit, recorded privilege
->   decision) can drop in without an ACME-surface change.
+>   CA-officer rights. Instead:
+>   - the RA's `revokeCert` records the revocation in the RA store (cert →
+>     `revoked`, order → `revoked`, GET cert → 410 Gone) and emits an honest audit
+>     event (`revocation_scope=ra-store-only`, `ca_crl_updated=false`);
+>   - `scripts/Revoke-Cert.ps1` is the operator-run, CA-officer credential that
+>     writes the CRL out-of-band.
+>
+>   The server's `revokeCert` endpoint remains wired to this leg via the
+>   `RevocationLeg` protocol, so a future in-band mechanism (an explicit, recorded
+>   privilege decision) can drop in without an ACME-surface change.
 >
 > Controls downstream of "ADCS issued a cert" (chain fetch, requester capture,
 > audit fields) are now **live-verified**, not just unit-tested. WI-015 (the
 > live re-proof) PASSED 2026-07-13; the enrollment physics is proven. The
 > remaining per-deployment conditions are the §6 operator-owned items (host
-> hardening, network allowlist) — in-app per-account rate limiting (WI-016),
+> hardening, network allowlist). In-app per-account rate limiting (WI-016),
 > revocation reconciliation (WI-017), and the operational runbook (WI-011..014)
 > all ship with the RA.
 
@@ -57,19 +59,19 @@ not apply.
 - **Enterprise trust, not public DV.** The gate is **EAB** (kid→MAC key, pinned
   to the authorized client) + **network allowlist** + **deterministic SAN-scope
   policy**. Domain-control challenges exist (RFC shape) but auto-satisfy under
-  the enterprise-trust model — EAB is the *who-is-allowed* gate, not the
-  challenge. **Any in-scope SAN can be issued without domain proof; the SAN
-  scope is therefore the critical control.** Public DV is out of scope.
+  the enterprise-trust model. EAB is the *who-is-allowed* gate, not the
+  challenge. **Any in-scope SAN can be issued without domain proof, so the SAN
+  scope is the critical control.** Public DV is out of scope.
 - **Blast-radius bound.** One **server-authentication-only** template; subject
   /SAN from the CSR; the gMSA holds Read+Enroll only. A compromise is bounded
-  to **spoofing internal TLS services** — short of client-auth/PKINIT (domain
+  to **spoofing internal TLS services**, short of client-auth/PKINIT (domain
   takeover).
 - **Pilot transport: Mode A only.** Web Enrollment on the CA itself; enrollment
-  is local → no Kerberos constrained delegation. **Mode C** (separate enrollment
-  host) introduces constrained delegation to `HOST/CA01`+`RPCSS/CA01` — a
-  distinct threat class (misconfigured delegation → unconstrained; on-behalf-of
-  surface) — and **requires a separate threat-model addendum** before use.
-  Mode C2 (CES/WSTEP/SOAP) is documented only.
+  is local, so there is no Kerberos constrained delegation. **Mode C** (separate
+  enrollment host) introduces constrained delegation to `HOST/CA01`+`RPCSS/CA01`
+  — a distinct threat class (misconfigured delegation → unconstrained;
+  on-behalf-of surface) — and **requires a separate threat-model addendum**
+  before use. Mode C2 (CES/WSTEP/SOAP) is documented only.
 
 ## 2. Assets
 
@@ -93,15 +95,15 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   call, pyOpenSSL, ctypes/marshal/pickle/runpy, `os.exec*`/`spawn*`, dynamic
   exec (`eval`/`exec`/`__import__`/`importlib.util`/`exec_module`), assignment-
   RHS aliasing (incl. tuple-unpack), wildcard imports, targeted `getattr`.
-  **Scope:** catches *accidental* drift toward signing; **not** a defense
-  against a determined adversary who controls the repo (that is code review +
-  the gMSA/template scoping). The guard is paired with positive/negative
+  **Scope:** it catches *accidental* drift toward signing. It is **not** a
+  defense against a determined adversary who controls the repo (that is code
+  review + the gMSA/template scoping). The guard is paired with positive/negative
   controls so it cannot silently become a no-op.
 - **Locked-dependency backstop** (`test_no_signing_dependencies.py`): asserts no
   signing-capable library (pyOpenSSL, asn1crypto, signxml) is declared in
-  `pyproject.toml` or importable in the env. **Limitation:** name-level only —
-  it does not pin versions or detect a backdoored `cryptography`. See supply
-  chain (§3.1).
+  `pyproject.toml` or importable in the env. **Limitation:** name-level only. It
+  does not pin versions or detect a backdoored `cryptography`. See supply chain
+  (§3.1).
 - The enrollment/revocation legs are **Protocols** with platform-gated real
   implementations; the RA only forwards CSRs.
 
@@ -109,8 +111,8 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - A **lockfile** (`uv.lock`) must be in use and committed for the pilot;
   dependencies reviewed for known vulns at pilot time.
 - `cryptography`, `fastapi`, `pydantic`, `uvicorn` are on the issuance path
-  (request parsing, settings); `requests` + `pyspnego` (SSPI via `sspilib`) are
-  the win32 enrollment client — the in-tree `negotiate_auth.NegotiateAuth`
+  (request parsing, settings). `requests` + `pyspnego` (SSPI via `sspilib`) are
+  the win32 enrollment client; the in-tree `negotiate_auth.NegotiateAuth`
   replaced the single-maintainer `requests-negotiate-sspi`, which also broke on
   Python 3.14. **A CVE in any of these is a pilot-blocker.**
 - Binary/native deps (SSPI, Kerberos) are pinned to a known-good version.
@@ -139,21 +141,22 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   to zero. Bounded by the server-auth-only EKU — no client-auth/PKINIT.
 - **Admin surface (operator-owned):** maintenance endpoints under
   `/acme/admin/*` (nonce cleanup, expired-order sweep, stuck-`processing`
-    reclaim) are gated by a single `admin_token` Bearer secret (`RAConfig`).
-    The token is a high-value secret (a holder can reconcile a stuck order to
-    `ready`, the one action that can enable a re-enroll) and MUST be rotated,
-    ACL'd, and distributed with the same care as an EAB MAC key. The reclaim
-    `ready` branch is the operator's double-issuance gate (confirm at the ADCS
-    CA DB that no cert was issued first); the server cannot make that decision
-    itself.
+  reclaim) are gated by a single `admin_token` Bearer secret (`RAConfig`).
+  The token is a high-value secret: a holder can reconcile a stuck order to
+  `ready`, the one action that can enable a re-enroll. It MUST be rotated,
+  ACL'd, and distributed with the same care as an EAB MAC key. The reclaim
+  `ready` branch is the operator's double-issuance gate (confirm at the ADCS
+  CA DB that no cert was issued first); the server cannot make that decision
+  itself.
 
 ### B. Stolen/compromised EAB key
 - **Controls:** EAB MAC verified **constant-time** (`hmac.compare_digest`); the
   binding must equal the account JWK (canonical compare, ignoring optional
   `alg`); the kid maps to a deterministic SAN scope; **failed account creation
   is audited** (`account-creation-denied`) to detect kid-space probing.
-- **Kids must be high-entropy** (UUID / ≥128-bit random) — a kid guess is a
-  meaningful probe event; operator-chosen, **not** a hostname or customer name.
+- **Kids must be high-entropy** (UUID / ≥128-bit random). A kid guess is a
+  meaningful probe event. Kids are operator-chosen, **not** a hostname or
+  customer name.
 - **Timing residual:** the unknown-kid path runs a dummy HMAC
   (`server._dummy_hmac`) so the known/unknown-kid wall-clock is comparable,
   closing the kid-*existence* timing side-channel. High-entropy kids remain the
@@ -170,20 +173,20 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   `finalize-policy-denied`. No issuance.
 - **CSR hardening:** CSR signature verified; minimum key strength (RSA≥2048, EC
   P-256/384/521); **non-DNSName SANs rejected** (IPAddress/otherName/URI/
-  RFC822Name/RegisteredID) — prevents scope expansion via SAN type. CSR
+  RFC822Name/RegisteredID), which prevents scope expansion via SAN type. CSR
   identifiers must be ⊆ the order's identifiers (RFC). Subject Common Names
   must be one of those DNS SANs, closing the legacy-CN second identity path.
   CSR requests for `BasicConstraints CA=true`, `keyCertSign`, or `cRLSign`
   are rejected before they reach ADCS.
 - **Post-issuance SAN verification (MED-1):** the policy above gates the
   *request*, but the ADCS template decides what SANs land on the cert. After
-  enrollment the RA inspects the *result*: every DNS SAN on the issued cert
+  enrollment the RA inspects the *result*. Every DNS SAN on the issued cert
   must be ⊆ the order's requested SANs (same `rstrip('.').lower()`
   normalization as the policy, so a trailing-dot/case difference cannot cause a
   false rejection), and **no non-DNS SAN may be present at all**. A violation
-  is fail-closed — 500 + `finalize-issued-cert-san-mismatch` audit, the cert is
-  neither recorded nor served — catching a template that pulls SANs from AD or
-  appends extras instead of taking them from the CSR.
+  is fail-closed: 500 + `finalize-issued-cert-san-mismatch` audit, and the cert
+  is neither recorded nor served. This catches a template that pulls SANs from
+  AD or appends extras instead of taking them from the CSR.
 - **Result binding and CA-capability rejection (2026-08-07 hardening):** the
   real `/certsrv/` response public key must equal the CSR public key, and every
   issued subject Common Name must remain within the requested DNS SAN set.
@@ -202,14 +205,14 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   validated. EAB JWS objects are bound to this RA's `newAccount` URL.
 - **URL binding is computed from configuration, not from the request
   (2026-08-11).** `_verify_url` and the EAB `expected_url` both previously
-  compared the protected-header `url` to `str(request.url)` — which is built
+  compared the protected-header `url` to `str(request.url)`, which is built
   from the client-supplied `Host` header (and, behind a proxy, from
   `X-Forwarded-Proto`). That only proved the client was self-consistent: with
   `Host:` set to another deployment's name, a JWS *and* an EAB minted for that
   deployment verified here, defeating the cross-endpoint replay control added on
   2026-08-07. The expected URL is now built from `base_url`, and `kid` must
   start with this RA's configured account-URL prefix. **Consequence for
-  operators:** `ACME_RA_BASE_URL` is now load-bearing, not cosmetic — it must be
+  operators:** `ACME_RA_BASE_URL` is now load-bearing, not cosmetic. It must be
   the exact public origin clients use, or every request is refused (fail-closed).
   Note also that `forwarded_allow_ips` cannot distinguish a proxy from a client
   behind a same-host reverse proxy (the peer is always loopback), which is why
@@ -217,18 +220,20 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - **Account eviction (2026-08-11).** `account.status` and the account's EAB kid
   are re-checked on **every** authenticated request. Previously `status` was
   never read and the kid was only re-checked inside `IssuancePolicy` at
-  finalize, so pulling a kid from `eab_allowlist` — the operator's
+  finalize. So pulling a kid from `eab_allowlist` — the operator's
   credential-revocation action — stopped issuance but left the account able to
   create orders, roll its key, and **revoke its own live certificates**. RFC 8555
-  §7.3.6 deactivation is implemented as the client-side kill switch; removing
+  §7.3.6 deactivation (`POST status=deactivated` to the account URL) is
+  implemented as the client-side kill switch; removing
   the kid is the operator-side one. Both are audited
-  (`account-deactivated`, `account-request-denied`).
+  (`account-deactivated`, `account-request-denied`). The account lifecycle is EAB rotation
+  (kid + MAC key + SAN scope), `keyChange` key rollover, and this deactivation.
 - **CSRF / cross-protocol:** ACME POSTs are `application/jose+json` (RFC 8555
   §6.2; enforced since 2026-10-01 — anything else is 415 before the body is
-  read or a nonce spent) and the body is a key-bound JWS signature. There is no browser-rendered
-  surface; a same-origin attacker would still need the account key. CSRF is a
-  non-issue *because* of JWS + EAB + the network allowlist — not because of a
-  CSRF token.
+  read or a nonce spent) and the body is a key-bound JWS signature. There is no
+  browser-rendered surface; a same-origin attacker would still need the account
+  key. CSRF is a non-issue *because* of JWS + EAB + the network allowlist, not
+  because of a CSRF token.
 - **IDOR (mutating endpoints):** every order/authz/finalize/revoke is scoped to
   the caller's account (kid→account from the JWS); cross-account → 404 (no leak).
 - **Double-issuance:** atomic `ready`→`processing` CAS; a `processing` order is
@@ -237,12 +242,12 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - **Proxy / Host-header footgun (deployment):** the JWS URL check compares the
   protected-header URL to `request.url`. **Behind a reverse proxy, uvicorn must
   run with `--proxy-headers` and `--forwarded-allow-ips` set to the proxy**, and
-  `base_url` must be the *public* hostname — otherwise every legitimate JWS is
+  `base_url` must be the *public* hostname. Otherwise every legitimate JWS is
   rejected as a URL mismatch (fail-closed) on day 1. This is a deployment
   prerequisite, not optional.
 - **Stuck-`processing` blast radius:** `processing_started_at` is recorded on
   the `ready`→`processing` CAS. *Auto*-recovery is intentionally absent for the
-  no-cert case — blindly reverting an order to `ready` risks double-issuance if
+  no-cert case: blindly reverting an order to `ready` risks double-issuance if
   the CA accepted the first request and the RA crashed before recording the
   cert. Two reconciliation paths exist:
   - **Cert recorded, status flip missed** (crash window between
@@ -254,39 +259,45 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
     reconciliation via the audited `POST /acme/admin/orders/{id}/reclaim-processing`
     endpoint (admin-token-gated), which CAS-reverts to `ready`. **Before this
     `ready` branch the operator MUST confirm from the ADCS CA database that no
-    cert was issued for the order's ReqID** — this is the one operator action
+    cert was issued for the order's ReqID.** This is the one operator action
     that can enable a re-enroll, and it is the operator's double-issuance gate,
     not the server's. No-op, lost-race, and not-found reclaim attempts are
     audited (`admin-order-reclaim-noop` / `-denied`) so a stolen admin token
     probing order IDs is visible to SIEM.
+
   The server's **automated** paths never double-issue (the `ready`→`processing`
-  CAS is the guard); the reclaim `ready` branch is the one operator-enabled
+  CAS is the guard). The reclaim `ready` branch is the one operator-enabled
   exception, gated by the documented CA-DB pre-condition **and by an enrollment
-  lease** (2026-08-15 rescan). Every entry into `processing` mints a
-  monotonically increasing `processing_generation`; the enrollment carries it and
-  re-checks it against the store immediately before submitting to ADCS, and every
-  transition *out* of `processing` is scoped to the generation its caller holds or
-  observed. That closes the gap where an enrollment still queued behind a busy
-  threadpool — already committed to `processing`, but invisible to the in-process
-  registry — could be reclaimed out from under itself and then submit alongside
-  the client's second finalize. A stale enrollment abandons before the CA call
-  (`finalize-enrollment-abandoned`, `reason=processing-lease-lapsed`). The
-  in-process registry now covers the whole in-flight interval (CAS, threadpool
-  hand-off, ADCS calls, certificate recording), so the two guards are
-  coextensive. Both the
-  `EnrollmentDenied` revert and the success-path `processing`→`valid` flip
-  are CAS-guarded so a concurrent reclaim or self-heal cannot be clobbered; a
-  lost CAS race is audited (`finalize-enrollment-race` at ERROR + SIEM) and
-  returns the order's current state without clobbering it. The success path
-  re-checks for an existing cert before creating one, preventing orphaned
-  duplicate cert rows. **Monitoring MUST alert on time-in-`processing` p99**
-  (pilot condition); the audited `GET /acme/admin/orders?status=processing`
-  endpoint surfaces stuck orders (minimal admin view — no SANs/cert URLs).
+  lease** (2026-08-15 rescan):
+  - Every entry into `processing` mints a monotonically increasing
+    `processing_generation`. The enrollment carries it and re-checks it against
+    the store immediately before submitting to ADCS, and every transition *out*
+    of `processing` is scoped to the generation its caller holds or observed.
+  - That closes the gap where an enrollment still queued behind a busy
+    threadpool — already committed to `processing`, but invisible to the
+    in-process registry — could be reclaimed out from under itself and then
+    submit alongside the client's second finalize.
+  - A stale enrollment abandons before the CA call
+    (`finalize-enrollment-abandoned`, `reason=processing-lease-lapsed`).
+  - The in-process registry now covers the whole in-flight interval (CAS,
+    threadpool hand-off, ADCS calls, certificate recording), so the two guards
+    are coextensive.
+  - Both the `EnrollmentDenied` revert and the success-path
+    `processing`→`valid` flip are CAS-guarded, so a concurrent reclaim or
+    self-heal cannot be clobbered. A lost CAS race is audited
+    (`finalize-enrollment-race` at ERROR + SIEM) and returns the order's current
+    state without clobbering it.
+  - The success path re-checks for an existing cert before creating one,
+    preventing orphaned duplicate cert rows.
+
+  **Monitoring MUST alert on time-in-`processing` p99** (pilot condition). The
+  audited `GET /acme/admin/orders?status=processing` endpoint surfaces stuck
+  orders (minimal admin view — no SANs/cert URLs).
 
 ### D.1 Availability of the unauthenticated surface (2026-08-11)
 
 - **`/acme/new-nonce` is unauthenticated and every call is a SQLite write.**
-  SQLite has a single writer, so a nonce flood does not merely grow a table — it
+  SQLite has a single writer, so a nonce flood does not merely grow a table. It
   contends for the write lock with the issuance path, where a blocked write
   surfaces as a 500 once `busy_timeout` (5s) expires. The WI-016 limiter cannot
   help: it keys on an account that does not exist yet at nonce time.
@@ -295,12 +306,12 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   costs less than an accepted one; plus the network allowlist, which is the
   authoritative outer bound and a pilot condition.
 - **Residual:** the bucket is per worker process. Under IIS/HttpPlatformHandler
-  the RA is a single uvicorn process so one bucket sees all traffic; if that is
+  the RA is a single uvicorn process, so one bucket sees all traffic. If that is
   ever scaled out, the effective ceiling multiplies by worker count. The proxy
   limit remains the real ceiling.
 - **Audit durability:** the default `jsonl` sink writes next to the database, so
   a compromise of the RA host takes the audit table *and* its only mirror. Set
-  `audit_offbox_required` in production — the RA then refuses to start unless
+  `audit_offbox_required` in production; the RA then refuses to start unless
   the syslog or HEC sink is configured. There is no append-only or hash-chain
   protection on `audit_log` itself; off-box emission is the control.
 - **Published surface:** FastAPI's `/docs`, `/redoc` and `/openapi.json` are
@@ -311,18 +322,21 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - **Confirming a CA-side revocation is a distinct authority (2026-08-13).** The
   WI-024 callback exists because the RA holds no CA rights and so cannot observe
   whether the CA actually revoked a serial. It previously accepted the general
-  `admin_token` and wrote `revocation-ca-confirmed` on the caller's word alone,
-  which made the audit trail assert an external security event the RA had not
-  seen — and let any admin-token holder drop a **still-valid** certificate off
+  `admin_token` and wrote `revocation-ca-confirmed` on the caller's word alone.
+  That made the audit trail assert an external security event the RA had not
+  seen, and let any admin-token holder drop a **still-valid** certificate off
   the retry queue, suppressing the very retry that would have revoked it. Now:
-  a dedicated `revocation_confirm_token` (the admin token is refused; unset ⇒
-  endpoint disabled, fail closed); every confirmation labelled
-  `verification="agent-asserted"` unless proven otherwise; and optional
-  independent proof via the CA's **published CRL** — signed by the CA, readable
-  without privilege, and the only check available to the RA that does not depend
-  on the calling agent's honesty. The CRL signature is verified against the
-  issuing CA certificate from the certificate's own stored chain, and an expired
-  CRL is not evidence. `require_crl_evidence` makes proof mandatory.
+  - a dedicated `revocation_confirm_token` is required (the admin token is
+    refused; unset ⇒ endpoint disabled, fail closed);
+  - every confirmation is labelled `verification="agent-asserted"` unless proven
+    otherwise;
+  - optional independent proof comes from the CA's **published CRL** — signed by
+    the CA, readable without privilege, and the only check available to the RA
+    that does not depend on the calling agent's honesty. The CRL signature is
+    verified against the issuing CA certificate from the certificate's own
+    stored chain, and an expired CRL is not evidence. `require_crl_evidence`
+    makes proof mandatory.
+
   *Residual:* an attacker holding the **confirm** token can still assert falsely
   unless CRL evidence is required; the control is least privilege plus honest
   labelling, not elimination.
@@ -337,30 +351,32 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   excludes quarantined rows so a retried finalize cannot pick it up, and the
   certificate response serves only `valid`.
 - **Only the issuing account may revoke** its own cert (lookup scoped to
-  `(serial, account_id)`); cross-account → 404 (no leak). Already-revoked →
-  **200**, a deliberate deviation: RFC 8555 §7.6 specifies 400
-  `alreadyRevoked`; the RA keeps 200 so a retried revocation that did succeed
-  never reads as a failure (owner decision 2026-10-01, WI-047; precedent:
-  the 2026-08-24 Certify the Web false-failed revocation). Revoked certs are **not served** (GET → 410
-  Gone); the order is flipped to `revoked`. **Reason 7 is rejected** (RFC 5280
-  reason 7 is "unused" and `certutil` rejects it) — the valid set is
-  `{0,1,2,3,4,5,6,8,9,10}`, consistent with `scripts/Revoke-Cert.ps1`, so an
-  accepted reason can never silently break the out-of-band revocation loop.
-  **Scope decision:** the RFC 8555 §7.6 *second* authorization path — a
-  revokeCert JWS signed with the certificate's own key pair — is **not
-  implemented**; revocation requires the issuing account's key. Certify the
-  Web only ever uses the account-key path, and the operator out-of-band path
-  (`Revoke-Cert.ps1` / the v1.5 automated loop) already covers revocation
-  when the ACME account is unavailable (e.g. a stolen cert key). Adding a
-  second crypto authorization path to a security endpoint for a client that
-  never uses it would widen surface for no operational gain — recorded here
-  as a deliberate non-goal, reversible if a future client needs it.
+  `(serial, account_id)`); cross-account → 404 (no leak).
+  - Already-revoked → **200**, a deliberate deviation: RFC 8555 §7.6 specifies
+    400 `alreadyRevoked`, but the RA keeps 200 so a retried revocation that did
+    succeed never reads as a failure (owner decision 2026-10-01, WI-047;
+    precedent: the 2026-08-24 Certify the Web false-failed revocation).
+  - Revoked certs are **not served** (GET → 410 Gone); the order is flipped to
+    `revoked`.
+  - **Reason 7 is rejected** (RFC 5280 reason 7 is "unused" and `certutil`
+    rejects it). The valid set is `{0,1,2,3,4,5,6,8,9,10}`, consistent with
+    `scripts/Revoke-Cert.ps1`, so an accepted reason can never silently break the
+    out-of-band revocation loop.
+  - **Scope decision:** the RFC 8555 §7.6 *second* authorization path — a
+    revokeCert JWS signed with the certificate's own key pair — is **not
+    implemented**; revocation requires the issuing account's key. Certify the
+    Web only ever uses the account-key path, and the operator out-of-band path
+    (`Revoke-Cert.ps1` / the v1.5 automated loop) already covers revocation
+    when the ACME account is unavailable (e.g. a stolen cert key). Adding a
+    second crypto authorization path to a security endpoint for a client that
+    never uses it would widen surface for no operational gain. This is recorded
+    here as a deliberate non-goal, reversible if a future client needs it.
 - **Cert-URL discoverability (narrowed 2026-08-11; plain GET removed 2026-08-15):**
   the cert URL remains in the order JSON after revocation (the URL is 128-bit
   unguessable); the *body* is 410. The plain, unauthenticated `GET /acme/cert/{id}`
   and `GET /acme/authz/{id}` forms leaked existence (**401 vs 410 vs 200**) and
   bypassed account deactivation and EAB-kid eviction. As of the 2026-08-15 review
-  (finding 4) they are **removed entirely** — only the account-scoped
+  (finding 4) they are **removed entirely**. Only the account-scoped
   `POST`-as-`GET` forms remain (RFC 8555 §6.3, §7.4.2), so no unauthenticated read
   path exists and the oracle is closed. A plain GET to either path now returns
   405.
@@ -369,12 +385,12 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - **CA-side revocation is out-of-band, operator-runbook'd (WI-010, decided
   2026-06-30).** The controls above are all **RA-store-level** (the RA marks
   the cert revoked and stops serving it). The passthrough to the ADCS CA
-  database / CRL is **deliberately not wired in-band**: ADCS Web Enrollment
+  database / CRL is **deliberately not wired in-band**. ADCS Web Enrollment
   exposes no revocation endpoint, and the real mechanism (`certutil -revoke`
   or `ICertAdmin2` COM) requires granting the caller **CA-officer ("Manage
-  CA") rights** — which would let a compromised RA host revoke *any* cert on
+  CA") rights**, which would let a compromised RA host revoke *any* cert on
   the CA, not just its own. That blast-radius increase was an **operator
-  decision** and the decision is **out-of-band first-class** (preserve least
+  decision**, and the decision is **out-of-band first-class** (preserve least
   privilege): the enrollment gMSA gains **no** CA-officer rights. Instead:
 
   - The RA's `revokeCert` endpoint records the revocation in the RA store
@@ -384,7 +400,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
     CA CRL was written when it was not. The ACME response carries an
     `X-Acme-Ra-Out-Of-Band-Revocation` response header (non-normative).
     It moved out of the response body on 2026-08-24: a JSON body here is NOT
-    ignored by standard ACME clients -- Certify the Web fails to parse it and
+    ignored by standard ACME clients — Certify the Web fails to parse it and
     reports a successful revocation as failed.
   - `scripts/Revoke-Cert.ps1` is the operator-run, CA-officer credential that
     performs the actual `certutil -revoke` against the CA and republishes the
@@ -396,7 +412,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 
   A future in-band revocation capability (gMSA granted CA-officer rights and
   `certutil`/`ICertAdmin2` called from the RA) remains a **deferred, explicit
-  privilege decision** — it would drop into the `RevocationLeg` protocol
+  privilege decision**. It would drop into the `RevocationLeg` protocol
   without changing the ACME surface, and only the `revocation_scope` metadata
   would change from `"ra-store-only"` to `"ca-crl"`. Until that decision is
   made and recorded here, `revokeCert` flips the RA store only — **the cert
@@ -406,7 +422,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - **Automated CA-side revocation (v1.5, WI-022/023/024/025).** v1.5 adds an
   **automated, template-bounded** CA-side revocation loop that closes the
   functional gap without widening the *enrollment* gMSA's rights. A separate
-  **`gMSA-acme-revoker$`** identity — distinct from the enrollment gMSA — runs
+  **`gMSA-acme-revoker$`** identity, distinct from the enrollment gMSA, runs
   `scripts/Sync-Revocations.ps1` as a scheduled task on a utility host. The
   loop: `GET /acme/admin/revocations/pending` (WI-023) → `Revoke-Cert.ps1`
   (WI-022, with requester-check) → `POST /acme/admin/revocations/{serial}/confirm`
@@ -416,7 +432,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 
   **Blast radius of `gMSA-acme-revoker$`:** the revoker's CA-officer rights are
   **template-scoped** via an `OfficerRights` callback ACE (Plan 004, proven live
-  in WI-021): it can revoke certs issued under `ACME-ServerAuth` only. Revoking
+  in WI-021). It can revoke certs issued under `ACME-ServerAuth` only; revoking
   any other template yields `CERTSRV_E_RESTRICTEDOFFICER`. This bounds a
   compromised revoker to **denial-of-availability for the RA's own TLS certs** —
   the same blast radius as a compromised issuing account (which can already
@@ -427,7 +443,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   **Two hard provisioning constraints** (violating either silently defeats the
   restriction or breaks it visibly):
   1. **Not a member of any broader certificate-manager group.** Officer rights
-     are a union over the token — a broader-manager membership (e.g. Certificate
+     are a union over the token. A broader-manager membership (e.g. Certificate
      Administrators) silently grants unrestricted revoke, defeating the
      `OfficerRights` ACE. The revoker must belong to no such group.
   2. **Member of `Certificate Service DCOM Access`.** Without this, `certutil
@@ -436,7 +452,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 
   **Defense-in-depth layers:**
   - `Revoke-Cert.ps1` (WI-022) asserts `Request.RequesterName` matches the
-    enrollment gMSA before revoking — the CA-side restriction is template-scoped,
+    enrollment gMSA before revoking. The CA-side restriction is template-scoped,
     not requester-scoped (C2 in the validation matrix), so this check prevents
     the agent from revoking certs the RA did not issue even if they share the
     `ACME-ServerAuth` template.
@@ -451,7 +467,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   "blast radius bounded to spoofing internal TLS" property no longer rests
   solely on ADCS template config. `finalize.py::_issued_cert_eku_violations`
   inspects the issued cert's EKU and **rejects** any cert whose EKU is not
-  exactly `{serverAuth}` (1.3.6.1.5.5.7.3.1) — absent EKU (all-purpose),
+  exactly `{serverAuth}` (1.3.6.1.5.5.7.3.1). An absent EKU (all-purpose),
   `clientAuth`, `anyExtendedKeyUsage`, PKINIT, or any other OID all fail
   closed (audit `finalize-issued-cert-eku-mismatch` + `server_internal`, cert
   not recorded or served). A template that ever gained clientAuth/PKINIT would
@@ -472,7 +488,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
     `CERTSRV_E_RESTRICTEDOFFICER`.
   - **Requester boundary.** `Revoke-Cert.ps1` still asserts
     `Request.RequesterName` matches the enrollment gMSA. In single-identity
-    mode this passes trivially — the revoker is the enrollment gMSA — but it
+    mode this passes trivially (the revoker is the enrollment gMSA), but it
     continues to reject certs the RA did not issue (e.g., another principal's
     `ACME-ServerAuth` cert; validation-matrix C2).
   - **Dry-run default, audit on both sides, one-directional loop (RA→CA only).**
@@ -482,7 +498,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 
   **What it loses (the honest trade-off):**
   - **Compromise independence.** In the two-identity design, stealing the
-    enrollment credential grants issue-only; stealing the revoker grants
+    enrollment credential grants issue-only, and stealing the revoker grants
     revoke-only (template-bounded). In single-identity, one credential
     compromise grants **both**. This enables a **mint-and-swap attack**:
     revoke the legitimate cert, issue a spoof under the same SAN, and
@@ -505,44 +521,46 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   additional gMSA is operationally feasible.
 
   **The two hard provisioning constraints still apply** (union semantics;
-  DCOM access) — same as the two-identity design; see `docs/operations.md`.
+  DCOM access), same as the two-identity design; see `docs/operations.md`.
 
   **CRL freshness vs. Manage-CA (the `-PublishCrl` trade-off).** By default the
   automated loop revokes the cert (recorded immediately in the CA DB) but does
-  **not** republish the CRL — `certutil -CRL republish` requires the
+  **not** republish the CRL. `certutil -CRL republish` requires the
   **Manage-CA** role, which the template-scoped officer identity deliberately
   does not hold, so the revocation appears at the next *scheduled* CRL
   publication. `Sync-Revocations.ps1 -PublishCrl` (and
   `Register-MaintenanceTasks.ps1 -PublishCrl`) can force an immediate republish,
-  but only if the identity is granted Manage-CA. In **single-identity** that is
-  especially dangerous: Manage-CA lets the identity edit CA configuration —
-  including lifting its **own** `OfficerRights` restriction — which **collapses
-  the escalation bound** described above (the restriction can no longer be
-  trusted to survive a compromise). It is more defensible for the **dedicated
-  two-identity revoker**, where a revoke-only account holding Manage-CA has a
-  much narrower blast radius. Treat `-PublishCrl` as a second explicit, recorded
-  decision on top of the single-identity choice; the least-privilege default
-  (scheduled CRL) is recommended for both topologies.
+  but only if the identity is granted Manage-CA.
+  - In **single-identity** that is especially dangerous: Manage-CA lets the
+    identity edit CA configuration — including lifting its **own**
+    `OfficerRights` restriction — which **collapses the escalation bound**
+    described above (the restriction can no longer be trusted to survive a
+    compromise).
+  - It is more defensible for the **dedicated two-identity revoker**, where a
+    revoke-only account holding Manage-CA has a much narrower blast radius.
+  - Treat `-PublishCrl` as a second explicit, recorded decision on top of the
+    single-identity choice. The least-privilege default (scheduled CRL) is
+    recommended for both topologies.
 
 ### F. Audit / SIEM
 - **Every** issuance, policy-denial, enrollment-failure, account creation
   (success **and** denied), and revocation is recorded in the RA SQLite store
-  **unconditionally** — the store write cannot be skipped by a SIEM-hook
+  **unconditionally**. The store write cannot be skipped by a SIEM-hook
   exception (fail-open applies to *emission*, not to the local record).
 - **SIEM startup probe:** jsonl writability verified at init; a broken sink →
   `enabled=False` + **ERROR** log; HEC/syslog config validated. HEC requires
   HTTPS and rejects embedded URL credentials so its bearer token cannot be
   sent in plaintext. Fail-open: a broken sink never aborts issuance.
-- **Runtime SIEM failures log at WARNING, not ERROR.** Therefore: **the
+- **Runtime SIEM failures log at WARNING, not ERROR.** Therefore **the
   production monitoring stack MUST alert on the RA logger at WARNING+** (not
-  ERROR-only) — this is a pilot condition, not a runbook footnote.
+  ERROR-only). This is a pilot condition, not a runbook footnote.
 - **Secret handling:** the EAB MAC key is never logged (verified). Other
-  secrets-at-rest: the `.env` (EAB keys, HEC token), the SQLite file, the SIEM
-  JSONL — all must be ACL'd to the gMSA + backup operator only, encrypted at
-  rest in backups. Audit `details` dicts are operator-validated for content
-  (the real enrollment leg's stringified exceptions could carry ADCS error XML
-  including the requester/template — review before pilot).
-- **Residual:** the local SQLite is the authoritative audit — it must be on
+  secrets-at-rest are the `.env` (EAB keys, HEC token), the SQLite file, and the
+  SIEM JSONL. All must be ACL'd to the gMSA + backup operator only, and
+  encrypted at rest in backups. Audit `details` dicts are operator-validated for
+  content (the real enrollment leg's stringified exceptions could carry ADCS
+  error XML including the requester/template — review before pilot).
+- **Residual:** the local SQLite is the authoritative audit. It must be on
   tamper-evident, backed-up storage (consider a write-once/append-only sink for
   `audit_log`).
 
@@ -558,7 +576,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - **Per-account / per-IP rate limiting** at the reverse proxy complements the
   in-app limit by bounding **raw request rate** (polls, challenge POSTs), which
   the in-app order limit does not cover. The ADCS `/certsrv/` leg is not
-  high-performance — a flood here becomes a flood at the CA. See
+  high-performance, so a flood here becomes a flood at the CA. See
   `docs/operations.md` ## Network allowlist and in-app rate limiting for
   copy-paste-ready snippets.
 - **Caps in code:** `max_identifiers_per_order` (default 50, 1 identifier = 1
@@ -568,16 +586,17 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   3600) and enforced at `finalize` (expired → `invalid` + audited as
   `finalize-expired-order`) and via the `DELETE /acme/admin/expired-orders`
   sweep for cron (RFC 8555 §7.1.6).
-- **Caps still to add (operator):** audit-log / cert-table retention+archival;
-  nonce-table size (GC is a probabilistic 1% cleanup on `create_nonce` as a
-  safety net, bounded by `LIMIT 5000` and indexed on `created_at`, + the public
-  `DELETE /acme/admin/nonces` for an external cron — wire the cron at pilot).
-  Independent of both sweeps, the 30-minute nonce TTL is enforced **at consume
-  time** (`consume_nonce` rejects an expired nonce even if GC never ran), so
-  an unused nonce's replay window is bounded by TTL, not by cleanup cadence.
-  `scripts/Register-MaintenanceTasks.ps1` (WI-013) ships the two scheduled
-  tasks (nonce GC + expired-order sweep) ready-to-install; see
-  `docs/operations.md` ## Scheduled maintenance tasks.
+- **Caps still to add (operator):** audit-log / cert-table retention+archival,
+  and nonce-table size.
+  - Nonce GC is a probabilistic 1% cleanup on `create_nonce` as a safety net,
+    bounded by `LIMIT 5000` and indexed on `created_at`, plus the public
+    `DELETE /acme/admin/nonces` for an external cron — wire the cron at pilot.
+  - Independent of both sweeps, the 30-minute nonce TTL is enforced **at consume
+    time** (`consume_nonce` rejects an expired nonce even if GC never ran), so
+    an unused nonce's replay window is bounded by TTL, not by cleanup cadence.
+  - `scripts/Register-MaintenanceTasks.ps1` (WI-013) ships the two scheduled
+    tasks (nonce GC + expired-order sweep) ready-to-install; see
+    `docs/operations.md` ## Scheduled maintenance tasks.
 - **Residual:** a single in-scope EAB account can still amplify work O(n) per
   order up to the identifier cap, and grow the store up to the retention bound.
 
@@ -592,9 +611,9 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
   (the RA channel-binds via `pyspnego`, so the hardened setting is supported —
   no need to weaken to Accept); IP-restricted to the RA host.
 - **CA `/certsrv/` TLS cert + RA trust:** `/certsrv/` must present a **server-
-  auth** TLS certificate — **not the CA's own certificate** (a CA cert used as a
+  auth** TLS certificate — **not the CA's own certificate**. A CA cert used as a
   TLS leaf is rejected by OpenSSL/the RA as "unsuitable purpose"; SChannel
-  tolerates it, so the misconfig hides until a non-Windows client connects). The
+  tolerates it, so the misconfig hides until a non-Windows client connects. The
   RA verifies that cert against `ACME_RA_ADCS_CA_BUNDLE` = the **enterprise root**
   (Python verifies against certifi, not the Windows store, so the private root
   must be pinned; the server supplies the intermediate).
@@ -704,11 +723,7 @@ The RA must never hold a CA/private signing key or sign a certificate. Enforced 
 - Becoming a CA / holding a signing key (**cardinal non-goal**).
 - Public-DV trust model.
 - CES/WSTEP (Mode C2) transport — documented only.
-- Auto-recovery of a stuck `processing` order (near-term follow-up, §7).
-- **Account deactivation** (RFC 8555 §7.3.6, `POST status=deactivated`). The
-  account lifecycle here is EAB rotation (kid + MAC key + SAN scope) plus
-  `keyChange` key rollover; a self-service deactivate endpoint adds surface no
-  chartered client uses. Reversible if a future client needs it.
+- Auto-recovery of a stuck `processing` order (deliberately absent; see §7).
 - **In-band** CA-side revocation (CRL write from the RA) — deferred behind an
   explicit, recorded privilege decision to grant the gMSA CA-officer rights
   (§4.E). The out-of-band path (`scripts/Revoke-Cert.ps1`, operator-run) is
