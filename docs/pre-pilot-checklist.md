@@ -1,47 +1,50 @@
 # Pre-pilot checklist
 
-`acme-adcs-ra` is **issuance-path infrastructure** — its worst case is
+`acme-adcs-ra` is **issuance-path infrastructure**. Its worst case is
 mis-issuance or leak of a standing ADCS enrollment identity. The read-only
-family's "worst case it's wrong" margin does not apply. This checklist gates a
+tools' "worst case, it's wrong" margin does not apply. This checklist takes a
 deployment from "the code works" to "responsible to run." Nothing here is
-optional for a pilot; items are owned by the operator unless marked otherwise.
+optional for a pilot. The operator owns every item unless it is marked
+otherwise.
 
-Derived from `docs/threat-model.md` (the §-references point back to it). Keep it
-honest: check a box only when the thing is actually true, not when it's planned.
+It is derived from `docs/threat-model.md`; the § references point back to it.
+Tick a box only when the thing is true now, not when it is planned.
 
 ## A. Code / artifact integrity (engineering)
 
 > **Engineering status at v1.10.0 (2026-08-24).** The three boxes below are
-> satisfied for the released artifact; they stay unticked because they are
-> *per-deployment* gates — whoever deploys the pilot re-checks them against the
+> satisfied for the released artifact. They stay unticked because they are
+> *per-deployment* gates: whoever deploys the pilot re-checks them against the
 > commit they actually ship. Read the caveat on the third one.
 
-- [ ] **Working tree committed.** Never deploy issuance infra from an uncommitted
-      tree — it breaks the provenance story the tool exists to provide.
+- [ ] **Working tree committed.** Never deploy issuance infrastructure from an
+      uncommitted tree. It breaks the provenance story the tool exists to
+      provide.
       *(v1.10.0: `main` clean and tagged at `229574d`.)*
-- [ ] **CI green on the deployed commit.** Linux gates (ruff, mypy --strict,
-      pytest, pip-audit) pass on the exact commit being deployed, on a remote
-      runner — not just locally. See `.github/workflows/ci.yml`.
-      *(v1.10.0: all six jobs green on `59fba73` — the 3.12/3.13/3.14 matrix,
-      both Pester engines including Windows PowerShell 5.1, pip-audit and the
-      identifier gate — on both the push and `pull_request` runs. This gate
-      earned its place on the first push of the series: a test that passed on
-      the 3.12 dev venv failed on 3.13/3.14, the versions the lab host and the
-      shipped deployment actually run.)*
+- [ ] **CI green on the deployed commit.** The Linux gates (ruff, mypy
+      --strict, pytest, pip-audit) must pass on the exact commit being
+      deployed, on a remote runner, not just locally. See
+      `.github/workflows/ci.yml`.
+      *(v1.10.0: all six jobs green on `59fba73` on both the push and
+      `pull_request` runs: the 3.12/3.13/3.14 matrix, both Pester engines
+      including Windows PowerShell 5.1, pip-audit and the identifier gate. This
+      gate earned its place on the first push of the series: a test that passed
+      on the 3.12 dev venv failed on 3.13/3.14, the versions the lab host and
+      the shipped deployment actually run.)*
 - [ ] **Live re-issue against current `main`.** The post-WI-001..005 finalize
       decomposition and CAS-guarded transitions landed *after* the 2026-06-20
-      live proof and are validated by unit tests only. Re-run a real end-to-end
-      issue on the lab against the current commit before pilot. **The proven
+      live proof and are validated by unit tests only. Before pilot, re-run a
+      real end-to-end issue on the lab against the current commit. **The proven
       artifact and the shipped artifact must be the same commit.**
       *(v1.10.0 caveat, stated rather than glossed: the live proof ran on
       `f6badc9`; the tag is `59fba73`. The delta is the version string plus
-      documentation — no `src/` or `scripts/` change — so it is not the same
-      commit and this box is not claimed. A pilot deployer who wants the
-      literal guarantee should re-run §A issuance against the tag.)*
-- [ ] **Live-only checks accumulated by the scan series.** Each of these is
-      unit-tested as far as it can be on a Linux dev host and genuinely unproven
-      against a real CA/host. They are cheap to fold into the next live
-      re-proof, and two of them decide whether a *revocation* proceeds:
+      documentation, with no `src/` or `scripts/` change, but it is not the same
+      commit, so this box is not claimed. A pilot deployer who wants the literal
+      guarantee should re-run §A issuance against the tag.)*
+- [ ] **Live-only checks accumulated by the scan series.** Each is unit-tested
+      as far as a Linux dev host allows and is otherwise unproven against a real
+      CA/host. They are cheap to fold into the next live re-proof, and two of
+      them decide whether a *revocation* proceeds:
   - [x] **`Test-SerialRevokedAtCa` (2026-08-17 F4) — PROVEN LIVE 2026-08-17.**
         A disposition-21/reason-8 row was correctly detected and the
         both-20-and-21 self-check did not fire. Original text follows.
@@ -123,81 +126,84 @@ honest: check a box only when the thing is actually true, not when it's planned.
 
 ## B. ADCS enrollment leg (the gMSA chokepoint — §4.A)
 
-- [ ] **gMSA installed on the host**: `Test-ADServiceAccount` returns `True`.
-      (AES Kerberos-etype + group-membership gotchas are on record if it fails.)
+- [ ] **gMSA installed on the host.** `Test-ADServiceAccount` returns `True`.
+      (If it fails, the AES Kerberos-etype and group-membership gotchas are on
+      record.)
 - [ ] **Template is server-authentication-only** (no client-auth/PKINIT EKU) and
-      its ACL grants **Enroll to the gMSA only** — verified with
-      `scripts/Verify-TemplateEnrollment.ps1` (confirms a normal user cannot
-      request it). This EKU scope is what bounds a compromise to TLS-service
-      spoofing.
+      its ACL grants **Enroll to the gMSA only**. Verify with
+      `scripts/Verify-TemplateEnrollment.ps1`, which confirms a normal user
+      cannot request it. This EKU scope is what limits a compromise to TLS
+      service spoofing.
 - [ ] **`/certsrv/` reachable** in the chosen transport mode (A or C per
-      `docs/certsrv-setup.md`); EPA posture matches the channel-binding client.
+      `docs/certsrv-setup.md`), and the EPA posture matches the channel-binding
+      client.
 
 ## C. ACME front gating (§4.B, §5)
 
 - [ ] **EAB enabled and pinned** to the authorized Certify-the-Web client(s).
-      Kids are high-entropy (UUID / ≥128-bit), **not** hostnames/customer names.
-- [ ] **EAB MAC keys placed in `acme-ra.env` by hand** (never committed, never on
-      a command line); file readable only by the gMSA + Administrators. Use
-      `scripts/eab.py` to mint a high-entropy kid + MAC key (stdout-only; see
-      `docs/operations.md` ## EAB lifecycle).
-- [ ] **Documented EAB rotation procedure exists** (kid + MAC key + SAN scope)
-      *before* pilot — threat-model §B calls this a precondition. Runbook:
-      `docs/operations.md` ## EAB lifecycle (mint + rotate via
+      Kids are high-entropy (UUID / ≥128-bit), **not** hostnames or customer
+      names.
+- [ ] **EAB MAC keys placed in `acme-ra.env` by hand.** Never commit them and
+      never put them on a command line. The file is readable only by the gMSA
+      and Administrators. Use `scripts/eab.py` to mint a high-entropy kid and
+      MAC key (stdout only; see `docs/operations.md` ## EAB lifecycle).
+- [ ] **EAB rotation procedure documented** (kid + MAC key + SAN scope)
+      *before* pilot; threat-model §B calls this a precondition. Runbook:
+      `docs/operations.md` ## EAB lifecycle (mint and rotate via
       `scripts/eab.py`).
 - [ ] **Network allowlist in place.** The installer deliberately does **not**
       restrict the endpoint. Add `<ipSecurity>` (IP and Domain Restrictions role
-      service) or a scoped firewall rule to the Certify-the-Web host. Do **not**
-      blanket-firewall 443 if it is SNI-shared with cert-watch/gpo-lens. Snippet
-      + caveats: `docs/operations.md` ## Network allowlist and reverse-proxy
+      service) or a scoped firewall rule for the Certify-the-Web host. Do **not**
+      blanket-firewall 443 if it is SNI-shared with cert-watch/gpo-lens.
+      Snippet and caveats: `docs/operations.md` ## Network allowlist and in-app
       rate limiting.
-- [ ] **`base_url` is the exact public origin (scheme + host + any port).** It is
-      the **authority** for the JWS and EAB URL bindings as of 2026-08-11, not a
-      display value: a JWS or EAB signed against any other URL is refused, and a
+- [ ] **`base_url` is the exact public origin (scheme + host + any port).** Since
+      2026-08-11 it is the **authority** for the JWS and EAB URL bindings, not a
+      display value. A JWS or EAB signed against any other URL is refused, and a
       mismatch fail-closes every legitimate request on day 1 (§4.D).
-- [ ] **EAB credentials are per-deployment.** Because the EAB binding now pins to
-      this RA's `newAccount` URL, a kid+MAC pair shared with a test/staging RA no
-      longer verifies here — but sharing one is still a credential-hygiene
-      failure. Mint separate kids per environment.
+- [ ] **EAB credentials are per-deployment.** The EAB binding now pins to this
+      RA's `newAccount` URL, so a kid+MAC pair shared with a test/staging RA no
+      longer verifies here. Sharing one is still a credential-hygiene failure:
+      mint separate kids per environment.
 - [ ] **Account eviction path understood.** Removing a kid from `eab_allowlist`
       now evicts every account created under it *completely* (orders, key
-      rollover, and revocation), not just issuance. Clients can also self-disable
+      rollover and revocation), not just issuance. Clients can also self-disable
       via RFC 8555 §7.3.6 deactivation. Both are audited.
 
 ## D. Admin surface (§4.A, §4.D)
 
-- [ ] **`admin_token` set, high-entropy, ACL'd, and rotatable** — treat it like an
+- [ ] **`admin_token` set, high-entropy, ACL'd and rotatable.** Treat it like an
       EAB MAC key. A holder can reconcile a stuck order to `ready`, the one
       action that can enable a re-enroll. Runbook: `docs/operations.md` ##
       Admin token and reclaim runbook.
-- [ ] **Reclaim runbook understood:** before using the reclaim→`ready` branch the
-      operator MUST confirm at the ADCS CA database that no cert was issued for
-      the order's ReqID. The server cannot make that double-issuance call itself.
-      Runbook: `docs/operations.md` ## Admin token and reclaim runbook.
+- [ ] **Reclaim runbook understood.** Before using the reclaim→`ready` branch
+      the operator MUST confirm at the ADCS CA database that no cert was issued
+      for the order's ReqID. The server cannot make that double-issuance call
+      itself. Runbook: `docs/operations.md` ## Admin token and reclaim runbook.
 
 ## E. Operations / DoS / observability (§4.G, §6)
 
-- [ ] **Reverse-proxy rate limiting** per-account / per-IP (complements the
-      in-app per-account order limit from WI-016, which bounds order creation
-      but not raw request rate; a proxy flood still reaches the CA). Snippets +
-      tuning guidance: `docs/operations.md` ## Network allowlist and in-app
-      rate limiting.
+- [ ] **Reverse-proxy rate limiting** per account and per IP. It complements the
+      in-app per-account order limit (WI-016), which bounds order creation but
+      not raw request rate; a proxy flood still reaches the CA. Snippets and
+      tuning: `docs/operations.md` ## Network allowlist and in-app rate
+      limiting.
 - [ ] **Crons wired:** `DELETE /acme/admin/nonces` (nonce GC) and
       `DELETE /acme/admin/expired-orders` (order sweep, RFC 8555 §7.1.6).
       Install via `scripts/Register-MaintenanceTasks.ps1` (WI-013); see
       `docs/operations.md` ## Scheduled maintenance tasks.
-- [ ] **Monitoring alerts on time-in-`processing` p99** (pilot condition);
-      `GET /acme/admin/orders?status=processing` surfaces stuck orders. SLOs +
+- [ ] **Monitoring alerts on time-in-`processing` p99** (pilot condition).
+      `GET /acme/admin/orders?status=processing` surfaces stuck orders. SLOs and
       alerting guidance: `docs/operations.md` ## Monitoring and SLOs.
-- [ ] **SIEM alerts on `finalize-enrollment-abandoned`.** A stale enrollment
-      abandoned before the CA call because its order was reclaimed while it was
-      still queued. Nothing was issued — but it means ordinary queueing is
-      crossing the reclaim age floor, which is the schedule the double-issuance
-      finding needed. Investigate enrollment latency, not the reclaim.
-      Background: `docs/security-review-2026-08-15-rescan.md`.
+- [ ] **SIEM alerts on `finalize-enrollment-abandoned`.** The event means a
+      stale enrollment was abandoned before the CA call because its order was
+      reclaimed while it was still queued. Nothing was issued. But it means
+      ordinary queueing is crossing the reclaim age floor, which is the schedule
+      the double-issuance finding needed. Investigate enrollment latency, not
+      the reclaim. Background: `docs/security-review-2026-08-15-rescan.md`.
 - [ ] **Audit leaves the box — REQUIRED, not "consider" (§4.D.1).** The default
-      `jsonl` sink writes next to the database, so a compromise of the RA host —
-      the adversary §4.A calls load-bearing — destroys the audit table *and* its
+      `jsonl` sink writes next to the database. A compromise of the RA host (the
+      adversary §4.A calls load-bearing) would destroy the audit table *and* its
       only mirror. Set `ACME_RA_AUDIT_OFFBOX_REQUIRED=true` with an
       authenticated HTTPS HEC sink; the RA then refuses to start with local
       JSONL or unauthenticated plaintext syslog as its load-bearing trail. A
@@ -206,42 +212,43 @@ honest: check a box only when the thing is actually true, not when it's planned.
 - [ ] **If HEC is not available, the syslog trade is recorded and accepted.**
       `ACME_RA_AUDIT_OFFBOX_ALLOW_UNAUTHENTICATED_SYSLOG=true` lets TCP syslog
       satisfy the requirement. Tick this box only if someone with the authority
-      to accept it has: the collector is unauthenticated and the trail is
-      readable and forgeable in transit. Prefer fixing the transport. UDP is
-      refused regardless. Confirm the `UNAUTHENTICATED OFF-BOX AUDIT` startup
-      warning is visible in whatever reads the RA's logs — it fires on every
-      start by design.
+      to accept the trade has accepted it: the collector is unauthenticated, and
+      the trail is readable and forgeable in transit. Prefer fixing the
+      transport. UDP is refused regardless. Confirm the
+      `UNAUTHENTICATED OFF-BOX AUDIT` startup warning is visible in whatever
+      reads the RA's logs; it fires on every start by design.
 - [ ] **Nonce ceiling reviewed.** `/acme/new-nonce` is unauthenticated and each
-      call is a SQLite write; the in-app token bucket
-      (`nonce_rate_limit_per_second`, default 20/s burst 100) bounds it before
+      call is a SQLite write. The in-app token bucket
+      (`nonce_rate_limit_per_second`, default 20/s, burst 100) bounds it before
       the write. Confirm the default is comfortably above real client volume and
-      that the network allowlist above is actually in place — the bucket is
-      defence in depth, not a substitute for it.
-- [ ] **Retention/archival** for `audit_log` and the cert table decided. Guidance:
-      `docs/operations.md` ## Retention and archival.
+      that the network allowlist above is actually in place. The bucket is
+      defence in depth, not a substitute.
+- [ ] **Retention/archival** for `audit_log` and the cert table decided.
+      Guidance: `docs/operations.md` ## Retention and archival.
 
 ## F. Known limitation to accept with eyes open
 
-- [ ] **CA-side revocation is out-of-band, operator-run (WI-010, §4.E).**
+- [ ] **CA-side revocation is out-of-band and operator-run (WI-010, §4.E).**
       `revokeCert` records the revocation in the RA store only (cert → revoked,
-      order → revoked, GET cert → 410 Gone) — it does **not** write the CA CRL.
-      The audit event honestly records `revocation_scope=ra-store-only`,
-      `ca_crl_updated=false`; the ACME response surfaces an
-      `X-Acme-Ra-Out-Of-Band-Revocation` header. The operator closes the loop by running
-      `scripts/Revoke-Cert.ps1` (a CA officer, **not** the gMSA) which runs
-      `certutil -revoke` and republishes the CRL. The enrollment gMSA gains no
-      CA-officer rights (the project's tightest security tenet). Confirm the
-      on-call runbook references `Revoke-Cert.ps1` and that the operator
-      verifies the CRL republished after each revocation before pilot. Runbook:
-      `docs/operations.md` ## Revocation runbook. **Reason 7 is rejected** by
-      both the RA and `Revoke-Cert.ps1` (RFC 5280 "unused"; `certutil` rejects
-      it) so an accepted reason can never silently break the out-of-band loop.
+      order → revoked, GET cert → 410 Gone). It does **not** write the CA CRL.
+      The audit event records `revocation_scope=ra-store-only` and
+      `ca_crl_updated=false`, and the ACME response carries an
+      `X-Acme-Ra-Out-Of-Band-Revocation` header. The operator closes the loop by
+      running `scripts/Revoke-Cert.ps1` (a CA officer, **not** the gMSA), which
+      runs `certutil -revoke` and republishes the CRL. The enrollment gMSA gains
+      no CA-officer rights (the project's tightest security tenet). Before
+      pilot, confirm that the on-call runbook references `Revoke-Cert.ps1` and
+      that the operator verifies the CRL republished after each revocation.
+      Runbook: `docs/operations.md` ## Revocation runbook. **Reason 7 is
+      rejected** by both the RA and `Revoke-Cert.ps1` (RFC 5280 "unused";
+      `certutil` rejects it), so an accepted reason can never silently break the
+      out-of-band loop.
 - [ ] **CRL evidence freshness is configured from your own CDP's observed
       served age.** Before enabling
       `ACME_RA_REVOCATION_CONFIRM_REQUIRE_CRL_EVIDENCE`, run
       `scripts/sample_crl_age.py` against your CDP across at least one complete
-      publication cycle — you must see the CRL Number turn over — and keep the
-      failed fetches, which are part of the distribution. Then set
+      publication cycle (you must see the CRL Number turn over). Keep the failed
+      fetches; they are part of the distribution. Then set
       `ACME_RA_REVOCATION_CONFIRM_CRL_MAX_AGE_SECONDS` strictly inside the band:
 
       > **above** the maximum age your CDP serves, with margin for a late
@@ -249,38 +256,39 @@ honest: check a box only when the thing is actually true, not when it's planned.
       > **below** the published window (`nextUpdate − thisUpdate`), or the
       > ceiling sits behind the CRL's own expiry and never fires first.
 
-      The application default is **626400** (7d 6h), which is the value measured
-      on the lab's weekly CA on 2026-09-05: served age at most 603654s (bounded
-      above by 605454s), window 649200s, so it clears the floor by ~5h49m and
-      the roof by ~6h20m. **That number is what one observation period supports
-      for a 1-week `CRLPeriod` with ADCS's computed 12h overlap — it is not a
-      universal bound, and a CA with a different cadence or overlap has a
-      different band, possibly an empty one.** Measure before you copy it.
+      The application default is **626400** (7d 6h), the value measured on the
+      lab's weekly CA on 2026-09-05: served age at most 603654s (bounded above by
+      605454s), window 649200s, so it clears the floor by ~5h49m and the roof by
+      ~6h20m. **That number is what one observation period supports for a
+      1-week `CRLPeriod` with ADCS's computed 12h overlap. It is not a universal
+      bound, and a CA with a different cadence or overlap has a different band,
+      possibly an empty one.** Measure before you copy it.
 
-      Do **not** derive the floor from the window: that substitution is what
-      produced four wrong derivations and two published numbers that were both
-      outside the band (`649800` above the roof, `604800` inside the
-      uncertainty on the floor). See `docs/operations.md` → *Deriving the
-      ceiling (WI-052)*. Preserve the samples outside the lab restore scope —
-      a teardown that restores to a pre-run fingerprint destroys exactly this
-      class of evidence.
+      Do **not** derive the floor from the window. That substitution produced
+      four wrong derivations and two published numbers that were both outside
+      the band (`649800` above the roof, `604800` inside the uncertainty on the
+      floor). See `docs/operations.md` → *Deriving the ceiling (WI-052)*.
+      Preserve the samples outside the lab restore scope: a teardown that
+      restores to a pre-run fingerprint destroys exactly this class of evidence.
 
-- [ ] **Monotonic CRL evidence is left enabled, and its baseline is understood.**
-      `ACME_RA_REVOCATION_CONFIRM_CRL_REQUIRE_MONOTONIC` defaults to `true`.
-      When CRL evidence is configured, it refuses evidence older than the
-      newest CRL already acted on for that issuing CA, independently of the
-      age ceiling's calibration. It does not establish that a first-seen CRL
-      is the newest document available: the first confirmation after deployment
-      or a CA key rollover has no prior watermark to compare against.
-      Document the recovery procedure before deployment. If a CA restore
-      produces a CRL Number below the stored watermark, confirmations remain
-      deferred until an operator resolves the regression; do not automatically
-      clear the watermark when a number goes backwards. An RA database restore
-      also restores its watermark, so reconcile the evidence gap before
-      resuming confirmations. If CDP replicas serve different vintages, use
-      the sampler's regression report to assess replica lag; it is evidence
-      about observed regressions, not a prediction of the exact confirmation
-      failure rate. See `docs/operations.md` → *Monotonic CRL evidence*.
+- [ ] **Monotonic CRL evidence is left enabled, and its baseline is
+      understood.** `ACME_RA_REVOCATION_CONFIRM_CRL_REQUIRE_MONOTONIC` defaults
+      to `true`. When CRL evidence is configured, it refuses evidence older than
+      the newest CRL already acted on for that issuing CA, independently of the
+      age ceiling's calibration. It does not establish that a first-seen CRL is
+      the newest document available: the first confirmation after deployment or
+      a CA key rollover has no prior watermark to compare against.
+      Document the recovery procedure before deployment.
+      - If a CA restore produces a CRL Number below the stored watermark,
+        confirmations stay deferred until an operator resolves the regression.
+        Do not automatically clear the watermark when a number goes backwards.
+      - An RA database restore also restores its watermark, so reconcile the
+        evidence gap before resuming confirmations.
+      - If CDP replicas serve different vintages, use the sampler's regression
+        report to assess replica lag. It is evidence about observed
+        regressions, not a prediction of the exact confirmation failure rate.
+
+      See `docs/operations.md` → *Monotonic CRL evidence*.
       **Proven live 2026-09-05** against two genuine CA-signed CRLs, including
       a negative control (the same serial and the same older CRL are accepted
       with `REQUIRE_MONOTONIC=false`, so the refusal is attributable to the
@@ -289,9 +297,10 @@ honest: check a box only when the thing is actually true, not when it's planned.
 ---
 
 When every box above is checked, the deployment has cleared the bar this tool is
-engineered to. Until then it has not — regardless of a green local test run.
+engineered to. Until then it has not, regardless of a green local test run.
 
 ---
+
 
 ## Validation log
 
